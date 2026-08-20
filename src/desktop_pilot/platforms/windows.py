@@ -19,10 +19,13 @@
 """
 from __future__ import annotations
 
+import functools
 import io
+import sys
 import time
 from ..core.element import ControlType, Element, Window
-from ..core.exceptions import PlatformError, WindowNotFoundError
+from ..core.exceptions import DesktopPilotError, PlatformError, WindowNotFoundError
+from ..core.logging import debug_enabled, logger
 from ..core.platform import Platform
 from ..core.types import Rect
 
@@ -195,6 +198,38 @@ def _safe_rect(rect_obj) -> Rect:
             return Rect(0, 0, 0, 0)
 
 
+def _contextualize(method):
+    """装饰 WindowsPlatform 的公共 I/O 方法：失败时自动附上环境快照。
+
+    - 已经是 DesktopPilotError：原地往 ``details["env"]`` 塞环境快照（幂等），
+      保留原有错误语义（WindowNotFound / ElementNotFound 仍是原类型）；
+    - 参数校验类错误（ValueError/TypeError/KeyError）：保持原样，不进快照；
+    - 其它外部异常（pywinauto COM / pyautogui）：转成带环境快照的
+      :class:`PlatformError`，这样分发边界能正确归类，而不是裸 ``InternalError``。
+
+    环境快照（:meth:`WindowsPlatform._context_snapshot`）含屏幕分辨率、DPI 缩放、
+    前台窗口、光标位置，是排障"点偏 / 发错窗口"的第一手信息。
+    """
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except DesktopPilotError as exc:
+            exc.details.setdefault("env", self._context_snapshot())
+            raise
+        except (ValueError, TypeError, KeyError):
+            raise
+        except Exception as exc:  # noqa: BLE001 - 外来异常统一包装
+            raise PlatformError(
+                f"{type(exc).__name__}: {exc}",
+                details={"env": self._context_snapshot()},
+            ) from exc
+
+    return wrapper
+
+
 class WindowsPlatform(Platform):
     """基于 pywinauto(UIA) + PyAutoGUI 的 Windows 后端。"""
 
@@ -223,6 +258,52 @@ class WindowsPlatform(Platform):
     # ------------------------------------------------------------------ #
     # 内部工具
     # ------------------------------------------------------------------ #
+    def _context_snapshot(self) -> dict[str, Any]:
+        """抓一份排障用的环境快照，失败时附在错误的 ``details["env"]`` 里。
+
+        全防御式：任一探测失败（缺属性 / COM 异常 / 无窗口）就跳过该项，
+        保证"为了报错"本身不会再抛错。视角：屏幕分辨率、DPI 缩放、
+        前台窗口、光标位置、解释器与库版本——调试"点偏 / 发错窗口"的第一手信息。
+        """
+        snap: dict[str, Any] = {}
+        try:
+            snap["screen_size"] = [
+                self._user32.GetSystemMetrics(0),
+                self._user32.GetSystemMetrics(1),
+            ]
+        except Exception:
+            pass
+        try:
+            hdc = self._user32.GetDC(0)
+            if hdc:
+                dpi = ctypes.windll.gdi32.GetDeviceCaps(hdc, 88)  # LOGPIXELSX
+                self._user32.ReleaseDC(0, hdc)
+                snap["dpi_scale_pct"] = int(round(dpi / 96 * 100))
+        except Exception:
+            pass
+        try:
+            fg = self._user32.GetForegroundWindow()
+            if fg:
+                buf = ctypes.create_unicode_buffer(512)
+                self._user32.GetWindowTextW(fg, buf, 512)
+                snap["foreground"] = {"hwnd": fg, "title": buf.value}
+        except Exception:
+            pass
+        try:
+            pt = wintypes.POINT()
+            if self._user32.GetCursorPos(ctypes.byref(pt)):
+                snap["cursor"] = (pt.x, pt.y)
+        except Exception:
+            pass
+        try:
+            snap["python"] = sys.version.split()[0]
+            import desktop_pilot as _dp
+
+            snap["desktop_pilot"] = getattr(_dp, "__version__", "unknown")
+        except Exception:
+            pass
+        return snap
+
     def _app_for(self, hwnd: int) -> "Application":  # pragma: no cover - 真实 UIA 连接
         app = self._apps.get(hwnd)
         if app is None:
@@ -646,6 +727,36 @@ class WindowsPlatform(Platform):
     def close(self) -> None:
         # pywinauto Application 没有需要显式释放的资源；清掉缓存即可。
         self._apps.clear()
+
+
+# 给所有真实 I/O 的公共方法挂上环境快照：失败时 details["env"] 自动带上
+# 屏幕/DPI/前台/光标（见 _context_snapshot 与 _contextualize）。集中 rewrap，
+# 避免在 17 处方法上各写一遍装饰器。close 是纯内存操作，无需包裹。
+_CONTEXTUALIZED_METHODS = (
+    "screenshot",
+    "list_windows",
+    "find_window",
+    "list_elements",
+    "move_to",
+    "click",
+    "double_click",
+    "right_click",
+    "middle_click",
+    "mouse_down",
+    "mouse_up",
+    "type_text",
+    "key_press",
+    "scroll",
+    "drag",
+    "_activate_window",
+    "_ensure_foreground",
+)
+for _method_name in _CONTEXTUALIZED_METHODS:
+    setattr(
+        WindowsPlatform,
+        _method_name,
+        _contextualize(getattr(WindowsPlatform, _method_name)),
+    )
 
 
 __all__ = ["WindowsPlatform"]

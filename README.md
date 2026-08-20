@@ -138,6 +138,19 @@ Hermes 里的工具名形如 `mcp_desktop_pilot_click_button`。验证：`hermes
 （注意：desktop-pilot 依赖用 `mcp>=1.0,<2.0` 与 Hermes 锁的 `mcp==1.26.0` 对齐，避免 2.0 的
 `isError → is_error` 字段改名让 Hermes 调用崩溃。）
 
+### 错误诊断
+
+工具调用失败时返回结构化错误：`error.context.arguments` 带当时参数、
+`error.details.env` 带失败瞬间的环境快照（屏幕/DPI 缩放/前台窗口/光标/版本）、
+意外异常自带完整 `error.traceback`。排障时开全量日志（Hermes 会写入
+`mcp-stderr.log`）：
+
+```bash
+export DESKTOP_PILOT_DEBUG=1     # Windows: set DESKTOP_PILOT_DEBUG=1
+```
+
+设了之后，预期错误也会附带完整调用栈，方便直接定位到源码行。
+
 ---
 
 ## 任务清单

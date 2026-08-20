@@ -61,9 +61,13 @@ def click_button(
     """
     matches = _find_buttons(platform, window, name, exact)
     if not matches:
+        # 附上"附近有什么按钮"：帮助判断是命名差异还是这个窗口压根没有按钮。
+        nearby = [
+            b.name for b in _find_buttons(platform, window, "", exact=False)[:8] if b.name
+        ]
         raise ElementNotFoundError(
             f"在窗口 {window.name!r} 里找不到按钮 name={name!r} (exact={exact})",
-            details={"window": window.name, "name": name, "exact": exact},
+            details={"window": window.name, "name": name, "exact": exact, "nearby": nearby},
         )
     if index < 0 or index >= len(matches):
         raise ElementNotFoundError(
@@ -92,9 +96,15 @@ def click_text(
         if el.visible and target_text in (el.name or "").casefold()
     ]
     if not matches:
+        # 附上"窗口里实际有哪些可见元素名"：一眼看出是命名差异还是窗口压根没这内容。
+        nearby = [
+            el.name
+            for el in _iter_elements(platform, window)
+            if el.visible and el.name
+        ][:8]
         raise ElementNotFoundError(
             f"在窗口 {window.name!r} 里找不到包含文本 {text!r} 的元素",
-            details={"window": window.name, "text": text},
+            details={"window": window.name, "text": text, "nearby": nearby},
         )
     if index < 0 or index >= len(matches):
         raise ElementNotFoundError(

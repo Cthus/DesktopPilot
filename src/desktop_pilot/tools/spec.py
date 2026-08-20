@@ -94,10 +94,27 @@ class ToolResult:
         details: Any | None = None,
         *,
         tool_name: str = "",
+        traceback: str | None = None,
+        context: dict[str, Any] | None = None,
     ) -> "ToolResult":
+        """构造失败结果。
+
+        Args:
+            message: 给调用方看的一句话。
+            error_type: 稳定错误类型名（异常类名 / ``UnknownTool`` / ``InternalError``）。
+            details: 异常自带的 ``details`` 字典（窗口名、目标名等业务上下文）。
+            tool_name: 失败的工具名，会一并出现在 ``to_dict()["tool"]``。
+            traceback: 完整调用栈文本（**仅供排查**，默认不含；意外异常才带）。
+            context: 分发边界抓到的调用上下文，如 ``{"arguments": {...}}``。
+                帮助复现失败（当时传了什么参数）。
+        """
         err: dict[str, Any] = {"type": error_type, "message": message}
         if details is not None:
             err["details"] = details
+        if context is not None:
+            err["context"] = context
+        if traceback is not None:
+            err["traceback"] = traceback
         return cls(ok=False, error=err, tool_name=tool_name)
 
     # ------------------------------------------------------------------ #

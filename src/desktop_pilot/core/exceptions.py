@@ -21,6 +21,27 @@ class DesktopPilotError(Exception):
             return f"{self.message} ({self.details})"
         return self.message
 
+    def with_details(self, **kw: Any) -> "DesktopPilotError":
+        """链式补充排查上下文：``raise E(...).with_details(window=..., name=...)``。
+
+        ``None`` 值跳过，避免污染 details。
+        """
+        for key, value in kw.items():
+            if value is not None:
+                self.details[key] = value
+        return self
+
+    @property
+    def traceback_text(self) -> str:
+        """把异常被 raise 时的调用栈格式化成多行文本（跨边界取用）。
+
+        只要异常在 raise 处被捕获，``__traceback__`` 就被 Python 填好，
+        在分发边界读此属性即可拿到完整堆栈，便于落日志 / 返回给调用方。
+        """
+        import traceback
+
+        return "".join(traceback.format_exception(type(self), self, self.__traceback__))
+
 
 class ElementNotFoundError(DesktopPilotError):
     """在控件树里找不到目标控件时抛出。"""

@@ -22,7 +22,7 @@ from .conftest import (
 
 
 def test_version():
-    assert __version__ == "0.2.1"
+    assert __version__ == "0.2.2"
 
 
 def test_context_manager_calls_close():

@@ -10,10 +10,12 @@ OpenAI function-calling / LangChain / MCP 都从这里派生。
 """
 from __future__ import annotations
 
+import traceback
 from typing import Any, Callable
 
 from ..core.element import Element, Window
 from ..core.exceptions import DesktopPilotError, WindowNotFoundError
+from ..core.logging import debug_enabled, logger
 from .spec import ToolResult, ToolSpec, classify_error
 
 
@@ -103,7 +105,16 @@ class ToolRegistry:
     # 分发
     # ------------------------------------------------------------------ #
     def call(self, name: str, arguments: dict[str, Any] | None = None) -> ToolResult:
-        """按名字分发执行，捕获所有异常并返回结构化 :class:`ToolResult`。"""
+        """按名字分发执行，捕获所有异常并返回结构化 :class:`ToolResult`。
+
+        失败时自带排查信息：
+
+        - ``error.context.arguments`` —— 当时传入的参数（复现用）；
+        - ``error.traceback`` —— 完整调用栈。**预期错误**（DesktopPilotError，
+          如"找不到按钮"）默认不带，靠 ``details`` 里的业务上下文；**意外异常**
+          才带，因为那才是要修的 bug；``DESKTOP_PILOT_DEBUG=1`` 时两者都带。
+        - 同时写入 ``desktop_pilot`` logger（stderr，Hermes 会落 mcp-stderr.log）。
+        """
         arguments = arguments or {}
         try:
             spec = self.get(name)
@@ -115,12 +126,39 @@ class ToolRegistry:
             value, image = self._invoke(spec.handler, arguments)
             return ToolResult.success(value, image=image, tool_name=name)
         except DesktopPilotError as exc:
-            etype, msg = classify_error(exc)
-            details = getattr(exc, "details", None)
-            return ToolResult.failure(msg, error_type=etype, details=details, tool_name=name)
+            return self._failure_from(name, arguments, exc)
         except Exception as exc:  # noqa: BLE001 - 分发边界要兜住一切
-            etype, msg = classify_error(exc)
-            return ToolResult.failure(msg, error_type=etype, tool_name=name)
+            return self._failure_from(name, arguments, exc)
+
+    @staticmethod
+    def _failure_from(
+        name: str, arguments: dict[str, Any], exc: BaseException
+    ) -> ToolResult:
+        """把分发边界的异常统一转成带排查信息的 ToolResult。"""
+        etype, msg = classify_error(exc)
+        details = getattr(exc, "details", None) or None
+        tb = getattr(exc, "traceback_text", None) or "".join(
+            traceback.format_exception(type(exc), exc, exc.__traceback__)
+        )
+        unexpected = not isinstance(exc, DesktopPilotError)
+
+        # 日志：意外异常永远带全栈（定位 bug）；预期错误只打一行（agent loop 正常分支）。
+        if unexpected:
+            logger.error("[%s] %s: %s\n%s", name, etype, msg, tb)
+        elif debug_enabled():
+            logger.warning("[%s] %s: %s\n%s", name, etype, msg, tb)
+        else:
+            logger.warning("[%s] %s: %s", name, etype, msg)
+
+        return ToolResult.failure(
+            msg,
+            error_type=etype,
+            details=details,
+            tool_name=name,
+            # 意外异常直接在错误里带 traceback，方便在 Hermes 端直接看到是哪一行。
+            traceback=tb if (unexpected or debug_enabled()) else None,
+            context={"arguments": arguments},
+        )
 
     @staticmethod
     def _invoke(handler: Callable[[dict[str, Any]], Any], args: dict[str, Any]):

@@ -4,6 +4,41 @@
 
 ## [Unreleased]
 
+## v0.2.2 — 完善的错误诊断体系
+
+让"某个工具调用失败"从一句话变成**能直接定位到行 / 复现现场**的结构化报错。
+Hermes 等宿主看到的不再是 `InternalError: ...` 一个干巴巴类型，而是带参数、
+带调用栈、带环境快照的完整现场。
+
+### Added — 新增
+
+- **统一日志**（`core/logging.py`）：所有失败写 stderr（MCP 场景下 Hermes 会落盘
+  `mcp-stderr.log`）。设 `DESKTOP_PILOT_DEBUG=1` 开启 DEBUG + 全量 traceback。
+- **错误环境快照**（Windows 后端 `_context_snapshot`）：每次失败自动附带
+  屏幕分辨率、DPI 缩放、前台窗口（hwnd+标题）、光标位置、Python 与库版本——
+  排查"点偏 / 发错窗口 / 高 DPI"的第一手数据。
+- **`_contextualize` 装饰器**：后端公共 I/O 方法失败时，外来异常（COM/UIA/
+  pyautogui）自动包装成带环境快照的 `PlatformError`（不再是裸 `InternalError`），
+  且保留 `__cause__` 链；预期错误原地附环境快照，不改变错误语义。
+- `DesktopPilotError.with_details()`（链式补充上下文）与 `traceback_text` 属性。
+
+### Changed — 变更
+
+- 注册表分发边界重写（`ToolRegistry._failure_from`）：失败结果现在携带
+  - `error.context.arguments` —— 当时传入的参数（复现用）；
+  - `error.traceback` —— 完整调用栈，**意外异常默认带**（要修的 bug），预期错误
+    默认不带（避免噪音），`DESKTOP_PILOT_DEBUG=1` 时两者都带；
+  - 同时写入 `desktop_pilot` 日志（预期错误单行 WARNING，意外错误带全栈 ERROR）。
+- 语义点击失败（`click_button` / `click_text`）的 `details` 附 `nearby`：
+  窗口里实际有哪些同名/可见元素，一眼看出是命名差异还是窗口压根没这控件。
+- 环境快照里的库版本改从源码 `desktop_pilot.__version__` 读取（editable 安装的
+  dist-info 元数据会滞后，不可靠）。
+- 版本升至 **0.2.2**。
+
+### Docs — 文档
+
+- README 补一段「错误诊断」：内置要打开的排障开关 `DESKTOP_PILOT_DEBUG`。
+
 ### Docs — 文档
 
 - README 补滞到 v0.2.1 实际状态：结构图补 `tools/` 注册表与 MCP server；
