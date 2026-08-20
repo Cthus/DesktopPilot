@@ -107,7 +107,7 @@ with Desktop() as bot:
 ## 给 agent 用：统一工具注册表 + MCP
 
 所有 agent 集成共用同一份工具定义——[`tools/Registry`](src/desktop_pilot/tools/registry.py) 是**唯一真相源**，
-22 个工具（感知 / 全套鼠标 / 键盘 / 语义点击 / 等待 / OCR）只定义一次，
+25 个工具（感知 / 全套鼠标 / 键盘 / 语义点击 / 等待 / OCR / 自绘界面专用）只定义一次，
 OpenAI Function Calling、LangChain、MCP 全部自动派生，杜绝多份定义漂移：
 
 ```python
@@ -115,7 +115,7 @@ from desktop_pilot import Desktop
 from desktop_pilot.tools import ToolRegistry
 
 reg = ToolRegistry(Desktop())
-reg.names()          # 22 个工具名
+reg.names()          # 25 个工具名
 reg.openai_schema()  # OpenAI function-calling schema
 reg.mcp_tools()      # MCP Tool 列表
 reg.call("desktop_click_button", {"window": "微信", "name": "发送"})
@@ -137,6 +137,23 @@ mcp_servers:
 Hermes 里的工具名形如 `mcp_desktop_pilot_click_button`。验证：`hermes mcp test desktop-pilot`。
 （注意：desktop-pilot 依赖用 `mcp>=1.0,<2.0` 与 Hermes 锁的 `mcp==1.26.0` 对齐，避免 2.0 的
 `isError → is_error` 字段改名让 Hermes 调用崩溃。）
+
+### 自绘界面（微信 / 游戏 / Canvas）怎么操作
+
+微信、游戏、Canvas、部分 Electron 应用是**自绘界面**——UIA 控件树读不到按钮，
+`desktop_click_button` / `desktop_click_text` 会找不到控件。请走 OCR 专用工具：
+
+| 目标 | 用哪个工具 |
+|---|---|
+| 按文字点一下（搜索、发送） | `desktop_find_text_click`（定位即点击，首选） |
+| 只定位文字位置 | `desktop_find_text` |
+| 等某段文字出现 | `desktop_wait_for_text` |
+| 等某段文字消失（加载遮罩） | `desktop_wait_until_text_gone` |
+
+OCR 需要两层依赖：Python 包（`pip install 'desktop-pilot[ocr]'`）+ 系统 Tesseract 引擎
+（Windows 装 [UB-Mannheim Tesseract](https://github.com/UB-Mannheim/tesseract/wiki)，或设
+`TESSERACT_CMD` 指向 tesseract.exe）。引擎缺失时这些工具会抛**可操作**的
+`OCRUnavailableError`（details 里明确缺什么、怎么装），而不是裸崩溃。
 
 ### 错误诊断
 

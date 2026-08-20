@@ -4,6 +4,34 @@
 
 ## [Unreleased]
 
+## v0.2.3 — 自绘界面开箱即用 + 排障体验闭环
+
+这一版目标：让 AI agent 能**稳定操控自绘界面（微信/游戏/Canvas）**，而不是
+一碰 OCR 就崩、退回手写 pyautogui。10 小时自主迭代的成果。
+
+### Added — 新增
+
+- **`OCRUnavailableError`**（`core/exceptions.py`）：找不到 OCR 引擎时抛**可操作**
+  的预期错误，details 带 pytesseract_installed / tesseract_installed / searched_paths /
+  fix（pip install 与装 Tesseract 指引），不再是裸 `InternalError`。
+- **3 个自绘界面专用工具**（注册表 22 → 25）：
+  - `desktop_find_text_click`：OCR 定位文字 → 一步点击其中心（自绘界面首选，可
+    window 激活防点错）。
+  - `desktop_wait_for_text`：OCR 轮询等某段文字出现（如"已发送"）并返回位置。
+  - `desktop_wait_until_text_gone`：OCR 轮询等某段文字消失（如加载遮罩）。
+- **工具描述引导**：`click_button` / `click_text` 明确标注"仅标准 UI，自绘界面请用
+  `find_text_click`"，把 LLM 导向正确的工具（治"野路子"根因）。
+
+### Changed — 变更
+
+- `desktop_pilot` 日志强制 UTF-8 stderr：修复 Windows locale（GBK）下中文在
+  Hermes 的 `mcp-stderr.log` 里变乱码的问题。
+- 版本升至 **0.2.3**。
+
+### Docs — 文档
+
+- README 补一段「自绘界面（微信等）」引导与 OCR 引擎安装说明。
+
 ## v0.2.2 — 完善的错误诊断体系
 
 让"某个工具调用失败"从一句话变成**能直接定位到行 / 复现现场**的结构化报错。
