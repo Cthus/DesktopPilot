@@ -8,10 +8,14 @@
 
 已知坑（务必留意）：
 1. ``pyautogui.click`` 可能被其它进程抢焦点，点击前必须先 ``_activate_window``。
-2. Godot / Unity 等游戏没有标准 UIA 子控件，``descendants()`` 可能为空，
-   此时只能退回截图 / OCR（见 :mod:`desktop_pilot.vision`）。
+2. Godot / Unity / Electron 等自绘界面没有标准 UIA 子控件，``descendants()``
+   可能为空，此时只能退回截图 / OCR（见 :mod:`desktop_pilot.vision`）。
 3. ``SetForegroundWindow`` 经常被 Windows 拒绝，需要 ``AttachThreadInput``
    把前台线程的输入队列 attach 到当前线程再设置前台。
+4. **高 DPI 缩放会让点击错位。** 模块导入时即调用 ``_enable_dpi_awareness()``
+   把进程声明为 per-monitor DPI 感知，否则在 125%/150% 缩放下，截图、UIA 控件
+   rect、pyautogui 点击会落在两套坐标系（逻辑 1536×864 vs 物理 1920×1080），
+   表现为"截图能看清但点偏"。
 """
 from __future__ import annotations
 
@@ -41,6 +45,34 @@ try:  # pragma: no cover - 平台相关
     _HAS_WIN32 = True
 except Exception:  # pragma: no cover
     _HAS_WIN32 = False
+
+
+def _enable_dpi_awareness() -> None:  # pragma: no cover - 真实 Win32 调用
+    """把当前进程声明为 DPI 感知，统一截图 / UIA 控件 / 鼠标坐标。
+
+    Windows 在高 DPI（如 125% 缩放）下，非 DPI 感知的进程会被系统**位图缩放**：
+    它以为屏幕只有 1536×864，而物理像素是 1920×1080。结果就是截图里看到的点、
+    pywinauto 读出的控件 rect、pyautogui 的鼠标点击落在两套坐标系，点击整体偏移
+    （截图能看清，但点不到对应位置）。这里尽早把进程设为 per-monitor DPI 感知，
+    让三者全部使用物理像素。
+
+    按支持度逐级降级：Per-Monitor V2 (Win10 1703+) → Per-Monitor → System →
+    旧版 SetProcessDPIAware。重复调用 / 已被外部声明过都安全。
+    """
+    for level in (-4, -3, -2):  # PER_MONITOR_AWARE_V2 / V1 / SYSTEM
+        try:
+            if ctypes.windll.shcore.SetProcessDpiAwareness(level) == 0:
+                return
+        except (OSError, AttributeError):
+            continue
+    try:
+        ctypes.windll.user32.SetProcessDPIAware()
+    except (OSError, AttributeError):
+        pass
+
+
+if _HAS_WIN32:  # pragma: no cover - 平台相关
+    _enable_dpi_awareness()
 
 
 # --------------------------------------------------------------------------- #

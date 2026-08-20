@@ -44,7 +44,6 @@ def create_server(desktop: Any = None) -> Any:
         from mcp.types import (  # type: ignore
             CallToolResult,
             ImageContent,
-            ListToolsResult,
             TextContent,
             Tool,
         )
@@ -59,21 +58,22 @@ def create_server(desktop: Any = None) -> Any:
         desktop = Desktop()
 
     registry = ToolRegistry(desktop)
+    server: Any = Server("desktop-pilot")
 
-    async def on_list_tools(_ctx: Any, _params: Any) -> Any:
-        return ListToolsResult(
-            tools=[
-                Tool(
-                    name=t["name"],
-                    description=t["description"],
-                    inputSchema=t["inputSchema"],
-                )
-                for t in registry.mcp_tools()
-            ]
-        )
+    @server.list_tools()
+    async def on_list_tools() -> Any:
+        return [
+            Tool(
+                name=t["name"],
+                description=t["description"],
+                inputSchema=t["inputSchema"],
+            )
+            for t in registry.mcp_tools()
+        ]
 
-    async def on_call_tool(_ctx: Any, params: Any) -> Any:
-        result = registry.call(params.name, params.arguments or {})
+    @server.call_tool()
+    async def on_call_tool(name: str, arguments: dict[str, Any]) -> Any:
+        result = registry.call(name, arguments or {})
         payload = result.to_dict(include_image=False)
         blocks: list[Any] = [
             TextContent(
@@ -92,13 +92,9 @@ def create_server(desktop: Any = None) -> Any:
                     mimeType=mime,
                 )
             )
-        return CallToolResult(content=blocks, is_error=not result.ok)
+        # MCP 1.x 字段是 isError（2.0 改成 is_error）。我们 pin 的是 mcp<2.0。
+        return CallToolResult(content=blocks, isError=not result.ok)
 
-    server: Any = Server(
-        "desktop-pilot",
-        on_list_tools=on_list_tools,
-        on_call_tool=on_call_tool,
-    )
     return server
 
 

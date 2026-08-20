@@ -4,6 +4,28 @@
 
 ## [Unreleased]
 
+## v0.2.1 — 修复 Hermes 工具调用 + 高 DPI 点击错位
+
+两个在真实 Hermes 联调中暴露的 bug 修复。
+
+### Fixed — 修复
+
+- **MCP server 与 mcp 2.0 不兼容导致 Hermes 调用工具必崩**：`desktop-pilot[mcp]`
+  的依赖约束写成了 `mcp>=1.0`，安装时把 mcp 拉到了 2.0.0；但 Hermes 自身 pin
+  的是 `mcp==1.26.0`，其客户端按 1.x 访问 `CallToolResult.isError`，而 2.0
+  把该字段改名为 `is_error`，于是**列工具正常、一调用就抛
+  `'CallToolResult' object has no attribute 'isError'`**。server 改用 mcp 1.x
+  的装饰器 API（`@server.list_tools()` / `@server.call_tool()`，
+  `inputSchema` / `isError`），并把依赖收紧为 `mcp>=1.0,<2.0`，与宿主一致。
+- **高 DPI 缩放下截图坐标与点击坐标错位（"看得清却点不准"）**：Windows 后端
+  此前没有声明 DPI 感知。在 125% 缩放（DPI 120）的机器上，非感知进程被系统
+  位图缩放，截图 / pywinauto(UIA) 控件 rect / pyautogui 点击落在两套坐标系
+  （逻辑 1536×864 vs 物理 1920×1080），点击整体偏移。现在模块导入时即调用
+  `_enable_dpi_awareness()`（Per-Monitor V2 → V1 → System 逐级降级），三者
+  统一到物理像素。
+- 修正 `[project.scripts]` 段误放 `dev` 依赖列表导致源码构建失败的问题
+  （`project.scripts.dev must be string`）。
+
 ## v0.2.0 — 统一 Agent API + MCP + 完整鼠标
 
 面向 AI agent 的接口层重写：引入**工具注册表**作为所有工具的唯一真相源，
