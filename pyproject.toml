@@ -33,15 +33,6 @@ ocr = ["pytesseract>=0.3.10"]
 vision = ["pytesseract>=0.3.10", "opencv-python>=4.8"]
 langchain = ["langchain-core>=0.1"]
 mcp = ["mcp>=1.0"]
-all = [
-    "pytesseract>=0.3.10",
-    "opencv-python>=4.8",
-    "langchain-core>=0.1",
-    "mcp>=1.0",
-]
-
-[project.scripts]
-desktop-pilot-mcp = "desktop_pilot.integrations.mcp_server:main"
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
@@ -51,6 +42,15 @@ dev = [
     "mypy>=1.5",
     "types-Pillow",
 ]
+all = [
+    "pytesseract>=0.3.10",
+    "opencv-python>=4.8",
+    "langchain-core>=0.1",
+    "mcp>=1.0",
+]
+
+[project.scripts]
+desktop-pilot-mcp = "desktop_pilot.integrations.mcp_server:main"
 
 [project.urls]
 Homepage = "https://github.com/Cthus/DesktopPilot"
