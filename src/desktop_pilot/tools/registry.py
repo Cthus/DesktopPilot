@@ -625,6 +625,59 @@ class ToolRegistry:
             handler=lambda a: self._find_text_click(a),
         ))
 
+        self._add(ToolSpec(
+            name="desktop_wait_for_text",
+            description=(
+                "用 OCR 轮询等待某段文字在屏幕（或区域）上出现，出现后返回其位置矩形。"
+                "用于自绘界面（微信/游戏/Canvas）的加载等待：等某个文字（如『已发送』、"
+                "『加载完成』）出现再继续。超时抛 WaitTimeoutError。需要 tesseract + [ocr]。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "要等待出现的文字。"},
+                    "region": {
+                        "type": "array",
+                        "description": "可选搜索区域 [left, top, right, bottom]。",
+                        "items": {"type": "integer"},
+                        "minItems": 4,
+                        "maxItems": 4,
+                    },
+                    "timeout": {"type": "number", "description": "最长等待秒数。", "default": 10},
+                    "poll_interval": {"type": "number", "description": "轮询间隔秒数。", "default": 1.0},
+                    "lang": {"type": "string", "description": "OCR 语言。", "default": "chi_sim+eng"},
+                },
+                "required": ["text"],
+            },
+            handler=lambda a: self._wait_for_text_ocr(a),
+        ))
+
+        self._add(ToolSpec(
+            name="desktop_wait_until_text_gone",
+            description=(
+                "用 OCR 轮询等待某段文字消失（如加载遮罩、弹窗文字）。"
+                "用于自绘界面等待操作完成。超时抛 WaitTimeoutError。需要 tesseract + [ocr]。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "要等待消失的文字。"},
+                    "region": {
+                        "type": "array",
+                        "description": "可选搜索区域 [left, top, right, bottom]。",
+                        "items": {"type": "integer"},
+                        "minItems": 4,
+                        "maxItems": 4,
+                    },
+                    "timeout": {"type": "number", "description": "最长等待秒数。", "default": 10},
+                    "poll_interval": {"type": "number", "description": "轮询间隔秒数。", "default": 1.0},
+                    "lang": {"type": "string", "description": "OCR 语言。", "default": "chi_sim+eng"},
+                },
+                "required": ["text"],
+            },
+            handler=lambda a: self._wait_until_text_gone_ocr(a),
+        ))
+
     # ------------------------------------------------------------------ #
     # 各 handler 实现
     # ------------------------------------------------------------------ #
@@ -812,6 +865,74 @@ class ToolRegistry:
                 "total_matches": len(rects),
             }
         }
+
+    def _wait_for_text_ocr(self, a: dict[str, Any]):
+        """OCR 轮询等待某段文字出现。"""
+        import time
+
+        from ..core.exceptions import WaitTimeoutError
+        from ..core.types import Rect
+        from ..vision.ocr import find_text
+
+        text = a["text"]
+        region = a.get("region")
+        rect = Rect(*region) if region else None
+        timeout = float(a.get("timeout", 10))
+        poll = float(a.get("poll_interval", 1.0))
+        lang = a.get("lang", "chi_sim+eng")
+
+        deadline = time.monotonic() + timeout
+        last_matches = 0
+        while True:
+            matches = find_text(self._bot._platform, text=text, region=rect, lang=lang)
+            last_matches = len(matches)
+            if matches:
+                return {
+                    "found": {
+                        "text": text,
+                        "rect": list(matches[0].to_tuple()),
+                        "matches": last_matches,
+                    }
+                }
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(poll)
+
+        raise WaitTimeoutError(
+            f"OCR 等待 {timeout:.1f}s 后文字 {text!r} 仍未出现",
+            details={"text": text, "timeout": timeout, "last_matches": last_matches},
+        )
+
+    def _wait_until_text_gone_ocr(self, a: dict[str, Any]):
+        """OCR 轮询等待某段文字消失。"""
+        import time
+
+        from ..core.exceptions import WaitTimeoutError
+        from ..core.types import Rect
+        from ..vision.ocr import find_text
+
+        text = a["text"]
+        region = a.get("region")
+        rect = Rect(*region) if region else None
+        timeout = float(a.get("timeout", 10))
+        poll = float(a.get("poll_interval", 1.0))
+        lang = a.get("lang", "chi_sim+eng")
+
+        deadline = time.monotonic() + timeout
+        last_matches = 1
+        while True:
+            matches = find_text(self._bot._platform, text=text, region=rect, lang=lang)
+            last_matches = len(matches)
+            if not matches:
+                return {"gone": {"text": text}}
+            if time.monotonic() >= deadline:
+                break
+            time.sleep(poll)
+
+        raise WaitTimeoutError(
+            f"OCR 等待 {timeout:.1f}s 后文字 {text!r} 仍存在（匹配 {last_matches} 处）",
+            details={"text": text, "timeout": timeout, "last_matches": last_matches},
+        )
 
 
 def _ok(message: str) -> dict[str, str]:
