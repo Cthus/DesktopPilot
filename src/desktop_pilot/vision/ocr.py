@@ -33,11 +33,25 @@ _TESSERACT_CANDIDATES = (
 )
 
 
+def _tesseract_cmd() -> str | None:
+    """返回 tesseract 引擎可执行文件的绝对路径；找不到返回 None。
+
+    先看 PATH（shutil.which），再看常见安装候选路径。Windows 上 Tesseract 常装在
+    Program Files 但不在 PATH，这里显式找到后让 pytesseract 能绑定上。
+    """
+    found = shutil.which("tesseract")
+    if found:
+        return found
+    for p in _TESSERACT_CANDIDATES:
+        candidate = p.format(user=os.environ.get("USERNAME", ""))
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def _tesseract_cmd_available() -> bool:
     """探测系统里是否真有 tesseract 引擎（PATH 或常见安装路径）。"""
-    if shutil.which("tesseract"):
-        return True
-    return any(os.path.exists(p.format(user=os.environ.get("USERNAME", ""))) for p in _TESSERACT_CANDIDATES)
+    return _tesseract_cmd() is not None
 
 
 def _ensure_ocr_ready():
@@ -58,8 +72,18 @@ def _ensure_ocr_ready():
             },
         ) from exc
 
-    # pytesseract 包在，但要确认引擎在。get_tesseract_version 会去找 tesseract
-    # 可执行文件；老版本 pytesseract 无此方法则退回路径探测。
+    # pytesseract 包在，但要确认引擎在。先看有没有引擎可执行文件；若有但不在
+    # pytesseract 默认查找范围（引擎装在 Program Files 未进 PATH），显式绑定
+    # pytesseract.pytesseract.tesseract_cmd（注意：pytesseract 的 __init__ 只 re-export
+    # 部分名字，引擎命令常量在子模块 pytesseract.pytesseract 里），让后续 image_to_data
+    # 用得上。用户显式设过 TESSERACT_CMD 则优先。
+    try:
+        _pt_sub = pytesseract.pytesseract  # noqa: E402 - 子模块在 import pytesseract 时已加载
+    except AttributeError:  # pragma: no cover - 极端版本差异
+        _pt_sub = pytesseract
+    if getattr(_pt_sub, "tesseract_cmd", None) == "tesseract":
+        _pt_sub.tesseract_cmd = os.environ.get("TESSERACT_CMD") or _tesseract_cmd()
+
     probe = getattr(pytesseract, "get_tesseract_version", None)
     try:
         if callable(probe):
