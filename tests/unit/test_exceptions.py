@@ -7,6 +7,7 @@ from desktop_pilot.core import exceptions as exc
 from desktop_pilot.core.exceptions import (
     DesktopPilotError,
     ElementNotFoundError,
+    OCRUnavailableError,
     PlatformError,
     UnsupportedOperationError,
     WaitTimeoutError,
@@ -18,6 +19,7 @@ ALL_ERRORS = [
     WindowNotFoundError,
     WaitTimeoutError,
     PlatformError,
+    OCRUnavailableError,
     UnsupportedOperationError,
 ]
 

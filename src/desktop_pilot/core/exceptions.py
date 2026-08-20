@@ -62,5 +62,13 @@ class PlatformError(DesktopPilotError):
     """平台后端调用失败（COM 错误、权限问题等）时抛出。"""
 
 
+class OCRUnavailableError(DesktopPilotError):
+    """OCR 引擎不可用时抛出（缺 pytesseract，或系统未装 Tesseract 二进制）。
+
+    设计意图：这类失败是 agent 可感知、可修复的（装依赖 / 设 TESSERACT_CMD），
+    属于**预期错误**——details 会带上具体缺什么、怎么修，而不是裸 InternalError。
+    """
+
+
 class UnsupportedOperationError(DesktopPilotError):
     """当前平台不支持某操作（如 macOS/Linux stub）时抛出。"""

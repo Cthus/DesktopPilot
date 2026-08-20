@@ -63,8 +63,10 @@ def test_screenshot_b64_compresses_under_limit():
 
 
 def test_find_text_requires_pytesseract(monkeypatch):
-    # 模拟 pytesseract 未安装：import 失败时给友好提示。
+    # 模拟 pytesseract 未安装：应抛可操作的 OCRUnavailableError（预期错误）。
     import builtins
+
+    from desktop_pilot.core.exceptions import OCRUnavailableError
 
     real_import = builtins.__import__
 
@@ -76,8 +78,38 @@ def test_find_text_requires_pytesseract(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", fake_import)
 
     fake = FakePlatform(screenshot_png=_make_png())
-    with pytest.raises(ImportError, match="pytesseract"):
+    with pytest.raises(OCRUnavailableError) as ei:
         find_text(fake, "hello")
+    assert ei.value.details["pytesseract_installed"] is False
+    assert "pip install" in ei.value.message
+
+
+def test_find_text_missing_engine_is_actionable(monkeypatch):
+    # pytesseract 在，但引擎探测失败（get_tesseract_version 抛错）→ OCRUnavailableError
+    import sys
+    import types
+
+    from desktop_pilot.core.exceptions import OCRUnavailableError
+
+    fake_tess = types.ModuleType("pytesseract")
+
+    class _Output:
+        DICT = "dict"
+
+    fake_tess.Output = _Output
+
+    def _raise_no_engine(*a, **k):
+        raise FileNotFoundError("tesseract not found")
+
+    fake_tess.get_tesseract_version = _raise_no_engine
+    fake_tess.image_to_data = lambda *a, **k: {}
+    monkeypatch.setitem(sys.modules, "pytesseract", fake_tess)
+
+    fake = FakePlatform(screenshot_png=_make_png())
+    with pytest.raises(OCRUnavailableError) as ei:
+        find_text(fake, "hello")
+    assert ei.value.details["pytesseract_installed"] is True
+    assert "TESSERACT_CMD" in ei.value.message
 
 
 def test_find_text_parses_ocr_results(monkeypatch):
@@ -91,6 +123,7 @@ def test_find_text_parses_ocr_results(monkeypatch):
         DICT = "dict"
 
     fake_tess.Output = _Output
+    fake_tess.get_tesseract_version = lambda *a, **k: "5.0.0"
     fake_tess.image_to_data = lambda *a, **k: {
         "text": ["开始", "提交按钮", "其它"],
         "left": [10, 100, 0],
@@ -117,6 +150,7 @@ def test_find_text_with_region_offset(monkeypatch):
         DICT = "dict"
 
     fake_tess.Output = _Output
+    fake_tess.get_tesseract_version = lambda *a, **k: "5.0.0"
     fake_tess.image_to_data = lambda *a, **k: {
         "text": ["OK"],
         "left": [5],
