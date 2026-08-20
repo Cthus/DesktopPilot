@@ -587,6 +587,44 @@ class ToolRegistry:
             handler=lambda a: self._find_text(a),
         ))
 
+        self._add(ToolSpec(
+            name="desktop_find_text_click",
+            description=(
+                "用 OCR 定位指定文字并直接点击其中心（自绘界面首选操作）。"
+                "适合点击微信/游戏/Canvas 这类 UIA 读不到的标准控件：你只要说点哪个字，"
+                "它负责找到并点下去。找不到或 index 越界会返回可理解的错误。"
+                "需要 tesseract + [ocr] 依赖。可选 window：给出则先激活该窗口再点。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "text": {"type": "string", "description": "要找到并点击的文字。"},
+                    "window": _window_param(
+                        "可选：目标窗口 id 或标题子串，给出则先激活该窗口再点击（防止点错应用）。"
+                    ),
+                    "region": {
+                        "type": "array",
+                        "description": "可选搜索区域 [left, top, right, bottom]（屏幕坐标）。",
+                        "items": {"type": "integer"},
+                        "minItems": 4,
+                        "maxItems": 4,
+                    },
+                    "index": {
+                        "type": "integer",
+                        "description": "多个匹配时点第几个（从 0 开始）。",
+                        "default": 0,
+                    },
+                    "lang": {
+                        "type": "string",
+                        "description": "OCR 语言，默认 chi_sim+eng。",
+                        "default": "chi_sim+eng",
+                    },
+                },
+                "required": ["text"],
+            },
+            handler=lambda a: self._find_text_click(a),
+        ))
+
     # ------------------------------------------------------------------ #
     # 各 handler 实现
     # ------------------------------------------------------------------ #
@@ -724,6 +762,56 @@ class ToolRegistry:
             lang=a.get("lang", "chi_sim+eng"),
         )
         return {"matches": [r.to_tuple() for r in rects]}
+
+    def _find_text_click(self, a: dict[str, Any]):
+        """OCR 定位文字并点击其中心（自绘界面首选操作）。"""
+        from ..core.exceptions import ElementNotFoundError
+        from ..core.types import Rect
+        from ..vision.ocr import find_text
+
+        region = a.get("region")
+        rect = Rect(*region) if region else None
+        rects = find_text(
+            self._bot._platform,
+            text=a["text"],
+            region=rect,
+            lang=a.get("lang", "chi_sim+eng"),
+        )
+        if not rects:
+            raise ElementNotFoundError(
+                f"OCR 在当前画面里没找到文字 {a['text']!r}",
+                details={
+                    "text": a["text"],
+                    "searched_region": rect.to_tuple() if rect else "fullscreen",
+                },
+            )
+        idx = int(a.get("index", 0))
+        if idx < 0 or idx >= len(rects):
+            raise ElementNotFoundError(
+                f"OCR 找到 {len(rects)} 个匹配，但 index={idx} 越界",
+                details={"text": a["text"], "count": len(rects), "index": idx},
+            )
+
+        target = rects[idx]
+        # 可选：先激活目标窗口，防止点进其它应用。
+        win_ref = a.get("window")
+        if win_ref is not None:
+            win = self._resolve_window(win_ref)
+            hwnd = getattr(win, "hwnd", None)
+            activator = getattr(self._bot._platform, "_activate_window", None)
+            if hwnd and callable(activator):
+                activator(hwnd)
+
+        cx, cy = target.center.to_tuple()
+        self._bot._platform.click(cx, cy)
+        return {
+            "clicked": {
+                "text": a["text"],
+                "rect": target.to_tuple(),
+                "center": [cx, cy],
+                "total_matches": len(rects),
+            }
+        }
 
 
 def _ok(message: str) -> dict[str, str]:
