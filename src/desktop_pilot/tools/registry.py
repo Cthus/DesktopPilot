@@ -428,7 +428,9 @@ class ToolRegistry:
             description=(
                 "在指定窗口内按名字找到按钮并点击（无需坐标，最稳）。"
                 "匹配 Button / MenuItem / Link / RadioButton。window 传窗口 id 或标题子串。"
-                "这是点击按钮的首选方式，比猜坐标准确。"
+                "这是点击**标准 UI** 按钮的首选方式。"
+                "注意：若目标应用是自绘界面（微信、游戏、Canvas、部分 Electron），"
+                "UIA 读不到按钮，请改用 desktop_find_text_click（OCR 按文字定位点击）。"
             ),
             parameters={
                 "type": "object",
@@ -456,6 +458,8 @@ class ToolRegistry:
             description=(
                 "点击指定窗口内名字包含某段文本的任意可见元素（不限控件类型，"
                 "适合点链接、标签、列表项等非按钮控件）。window 传窗口 id 或标题子串。"
+                "用于**标准 UI**。自绘界面（微信/游戏/Canvas）UIA 读不到元素名时，"
+                "改用 desktop_find_text_click（OCR 定位文字点击）。"
             ),
             parameters={
                 "type": "object",
@@ -590,9 +594,10 @@ class ToolRegistry:
         self._add(ToolSpec(
             name="desktop_find_text_click",
             description=(
-                "用 OCR 定位指定文字并直接点击其中心（自绘界面首选操作）。"
-                "适合点击微信/游戏/Canvas 这类 UIA 读不到的标准控件：你只要说点哪个字，"
-                "它负责找到并点下去。找不到或 index 越界会返回可理解的错误。"
+                "用 OCR 定位指定文字并直接点击其中心。**这是自绘界面（微信、游戏、Canvas、"
+                "部分 Electron）点击的首选工具**——这类应用 UIA 读不到按钮，click_button / "
+                "click_text 会找不到控件。用法：你只要说点哪个字（如『搜索』『发送』），"
+                "它负责找到并点下去。找不到或 index 越界返回可理解的错误。"
                 "需要 tesseract + [ocr] 依赖。可选 window：给出则先激活该窗口再点。"
             ),
             parameters={
