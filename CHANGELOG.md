@@ -4,6 +4,13 @@
 
 ## [Unreleased]
 
+### Docs — 文档
+
+- README 补滞到 v0.2.1 实际状态：结构图补 `tools/` 注册表与 MCP server；
+  新增「统一工具注册表 + MCP / 接入 Hermes」小节；验收清单按实测勾选
+  （basic_usage / open_browser / 单测 / 集成测试 / 高 DPI 坐标闭环 / Hermes 22 工具）；
+  路线图标注 v0.1–v0.2.1 完成状态。
+
 ## v0.2.1 — 修复 Hermes 工具调用 + 高 DPI 点击错位
 
 两个在真实 Hermes 联调中暴露的 bug 修复。

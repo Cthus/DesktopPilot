@@ -57,9 +57,13 @@ DesktopPilot/
 │       │   ├── type_text.py    # type_into / type_at
 │       │   ├── wait.py         # wait_for / wait_until_gone
 │       │   └── form.py         # fill_form 批量填表
+│       ├── tools/              # 统一工具注册表（所有 agent 集成的唯一真相源）
+│       │   ├── spec.py         # ToolSpec / ToolResult / 错误分类
+│       │   └── registry.py     # ToolRegistry：22 个工具只定义一次
 │       └── integrations/       # 第三方框架适配
-│           ├── langchain.py    # LangChain Tool 包装
-│           └── function_call.py # OpenAI Function Calling schema
+│           ├── function_call.py # OpenAI Function Calling schema
+│           ├── langchain.py     # LangChain Tool 包装
+│           └── mcp_server.py    # MCP stdio server（desktop-pilot-mcp）
 ├── tests/                      # 测试
 │   ├── unit/                   # mock 平台单测
 │   └── integration/            # 真实 Windows 集成测试（@pytest.mark.integration）
@@ -97,6 +101,42 @@ with Desktop() as bot:
     bot.wait_for(window=win, name="确定", timeout=5)
     bot.fill_form(window=win, fields={"用户名": "admin", "密码": "123"})
 ```
+
+---
+
+## 给 agent 用：统一工具注册表 + MCP
+
+所有 agent 集成共用同一份工具定义——[`tools/Registry`](src/desktop_pilot/tools/registry.py) 是**唯一真相源**，
+22 个工具（感知 / 全套鼠标 / 键盘 / 语义点击 / 等待 / OCR）只定义一次，
+OpenAI Function Calling、LangChain、MCP 全部自动派生，杜绝多份定义漂移：
+
+```python
+from desktop_pilot import Desktop
+from desktop_pilot.tools import ToolRegistry
+
+reg = ToolRegistry(Desktop())
+reg.names()          # 22 个工具名
+reg.openai_schema()  # OpenAI function-calling schema
+reg.mcp_tools()      # MCP Tool 列表
+reg.call("desktop_click_button", {"window": "微信", "name": "发送"})
+```
+
+### 接入 Hermes（已配置好）
+
+本地 Hermes 通过 stdio MCP server 使用这套工具，
+已在 `C:\Users\Administrator\AppData\Local\hermes\config.yaml` 注册：
+
+```yaml
+mcp_servers:
+  desktop-pilot:
+    command: <hermes-venv-python>
+    args: [-m, desktop_pilot.integrations.mcp_server]
+    enabled: true
+```
+
+Hermes 里的工具名形如 `mcp_desktop_pilot_click_button`。验证：`hermes mcp test desktop-pilot`。
+（注意：desktop-pilot 依赖用 `mcp>=1.0,<2.0` 与 Hermes 锁的 `mcp==1.26.0` 对齐，避免 2.0 的
+`isError → is_error` 字段改名让 Hermes 调用崩溃。）
 
 ---
 
@@ -792,17 +832,14 @@ def get_tools_schema():
 
 ## 验收检查清单
 
-完成所有任务后，对照这张表检查：
-
-- [ ] `pip install -e ".[all]"` 成功
-- [ ] `python examples/basic_usage.py` 在 Windows 上跑通
-- [ ] `python examples/open_browser.py` 跑通
-- [ ] `pytest tests/unit -v` 全绿（≥30 个测试）
-- [ ] `Desktop` 类的所有 API 在 Windows 上能用
-- [ ] LangChain 集成示例跑通
-- [ ] README 完整
-
----
+- [x] `python examples/basic_usage.py` 在 Windows 上跑通（列出窗口 + 读微信控件树 + 截图，实测通过）
+- [x] `python examples/open_browser.py` 跑通（Win+R 启动浏览器 → Ctrl+L 聚焦地址栏 → 输入 URL → 回车 → 截图 → 关标签，实测通过）
+- [x] `pytest tests/unit -v` 全绿（106 个单测，~89% 覆盖率）
+- [x] `pytest tests/integration -m integration` 全绿（3 个真实 Windows：枚举窗口 / 截图 / 读控件树）
+- [x] 高 DPI 下坐标对齐（125% 缩放机器实测：UIA 控件中心 → 真实光标落点 0 像素偏差）
+- [x] Hermes MCP 接入（`hermes mcp test desktop-pilot` → 22 工具，截图返回物理分辨率图像）
+- [ ] `pip install -e ".[all]"` 全量安装（构建已验证；OCR 运行时需另装 tesseract 系统二进制）
+- [ ] LangChain agent 示例跑通（`get_tools` 单测已覆盖；`langchain_agent.py` 需 OpenAI API key，按需运行）
 
 ## 安装
 
@@ -836,10 +873,11 @@ tools = get_tools()
 
 ## 路线图
 
-**v0.1（MVP）**：P0 + P1 全部完成，能 `pip install` 出来用
-**v0.2**：P2 完成，接 LangChain/OpenAI agent
-**v0.3**：P3 完成，macOS/Linux 至少能跑基础 API
-**v1.0**：完整测试覆盖 + 文档站 + 性能 benchmark
+**v0.1** ✅ MVP：P0 + P1 完成，可 pip install 使用
+**v0.2** ✅ 统一工具注册表 + MCP server + 完整鼠标 API（左/右/中键、滚轮、按下/松开、拖拽）
+**v0.2.1** ✅ Hermes 实战修复：MCP 1.x 兼容 + 高 DPI 点击偏移 + 构建修复
+**v0.3** 🔜 P3：macOS / Linux 至少能跑基础 API（当前为 stub）
+**v1.0** 目标：完整测试覆盖 + 文档站 + 性能 benchmark + PyPI 正式发布，API 锁定稳定
 
 ---
 
