@@ -1,181 +1,62 @@
-"""OpenAI / Anthropic 兼容的 function calling JSON schema。
+"""OpenAI / Anthropic 兼容的 function-calling JSON schema。
 
-``get_tools_schema()`` 返回的列表可直接塞给 OpenAI ``chat.completions``
-的 ``tools`` 参数，或 Anthropic Messages 的 ``tools`` 字段。
+历史上本模块手写了一份工具 schema；现在所有工具的唯一真相源在
+:mod:`desktop_pilot.tools`（:class:`~desktop_pilot.tools.ToolRegistry`），
+本模块只是从注册表派生出 OpenAI/Anthropic 格式的薄封装。
+
+需要执行工具时（拿到模型的 tool_call 后），请直接用注册表的分发器::
+
+    from desktop_pilot import Desktop
+    from desktop_pilot.tools import ToolRegistry
+
+    bot = Desktop()
+    registry = ToolRegistry(bot)
+    result = registry.call(tool_call.name, tool_call.arguments)
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Optional
+
+from ..tools import ToolRegistry
+
+_default_registry: Optional[ToolRegistry] = None
 
 
-def get_tools_schema() -> list[dict[str, Any]]:
-    """返回一组桌面自动化工具的 JSON schema。"""
-    return [
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_screenshot",
-                "description": "截取当前屏幕，返回 base64 编码的 JPEG 图像。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "max_size_kb": {
-                            "type": "integer",
-                            "description": "返回图像的最大体积（KB），超出会自动压缩。",
-                            "default": 500,
-                        }
-                    },
-                    "required": [],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_list_windows",
-                "description": "列出当前所有可见的顶层窗口，返回标题、句柄、位置等。",
-                "parameters": {"type": "object", "properties": {}, "required": []},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_find_window",
-                "description": "按标题精确/子串匹配找到一个窗口。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "title": {"type": "string", "description": "窗口标题精确匹配"},
-                        "title_contains": {
-                            "type": "string",
-                            "description": "窗口标题包含的子串",
-                        },
-                    },
-                    "required": [],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_list_elements",
-                "description": "列出指定窗口的所有 UI 控件（按钮/输入框/文本等结构化控件树）。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "window": {
-                            "type": "string",
-                            "description": "目标窗口标题（子串匹配）",
-                        }
-                    },
-                    "required": ["window"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_click",
-                "description": "在屏幕绝对坐标处单击鼠标左键。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "x": {"type": "integer", "description": "横坐标像素"},
-                        "y": {"type": "integer", "description": "纵坐标像素"},
-                    },
-                    "required": ["x", "y"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_click_button",
-                "description": "在指定窗口内按名字找到按钮并点击（无需坐标）。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "window": {"type": "string", "description": "窗口标题子串"},
-                        "name": {"type": "string", "description": "按钮名字"},
-                        "exact": {
-                            "type": "boolean",
-                            "description": "是否精确匹配名字，默认 true",
-                            "default": True,
-                        },
-                    },
-                    "required": ["window", "name"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_type_text",
-                "description": "在当前焦点处逐字输入文本。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {"text": {"type": "string"}},
-                    "required": ["text"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_type_into",
-                "description": "在指定窗口里按标签找到输入框并填入文本。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "window": {"type": "string", "description": "窗口标题子串"},
-                        "field": {
-                            "type": "string",
-                            "description": "输入框标签/名字包含的子串",
-                        },
-                        "text": {"type": "string", "description": "要填入的文本"},
-                    },
-                    "required": ["window", "field", "text"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_key_press",
-                "description": "按键或组合键，如 'enter'、'tab'、'ctrl+c'、'alt+f4'。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "key": {
-                            "type": "string",
-                            "description": "键名或用 '+' 连接的组合键",
-                        }
-                    },
-                    "required": ["key"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "desktop_wait_for",
-                "description": "轮询等待某个文本/命名元素出现，返回元素信息。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "text": {"type": "string", "description": "等待元素名字包含的文本"},
-                        "name": {"type": "string", "description": "等待元素的精确名字"},
-                        "timeout": {
-                            "type": "number",
-                            "description": "最长等待秒数",
-                            "default": 10,
-                        },
-                    },
-                    "required": [],
-                },
-            },
-        },
-    ]
+def _get_registry(desktop: Any = None) -> ToolRegistry:
+    """拿到一个注册表实例。
+
+    - 传入 desktop 时用它（执行工具必需）；
+    - 仅取 schema（不执行）时 desktop 可省略，内部懒构造一个 Desktop——
+      schema 与平台无关，构造后端不会产生真实输入副作用。
+    """
+    global _default_registry
+    if desktop is not None:
+        return ToolRegistry(desktop)
+    if _default_registry is None:
+        from .. import Desktop
+
+        _default_registry = ToolRegistry(Desktop())
+    return _default_registry
 
 
-__all__ = ["get_tools_schema"]
+def get_tools_schema(desktop: Any = None) -> list[dict[str, Any]]:
+    """返回 OpenAI/Anthropic function-calling 工具声明列表。
+
+    Args:
+        desktop: 可选的 :class:`~desktop_pilot.Desktop` 实例；仅生成 schema
+            时不需要传。若你还要 :func:`call_tool`，请传同一个 desktop 以便
+            共享实例与缓存。
+    """
+    return _get_registry(desktop).openai_schema()
+
+
+def call_tool(name: str, arguments: dict[str, Any] | None = None, desktop: Any = None):
+    """按名字分发执行一个工具，返回结构化结果。
+
+    这是给原生 function-calling agent 用的执行器：模型返回 tool_call 后，
+    直接把 ``name`` / ``arguments`` 丢进来即可，无需自己写 if/else 分发。
+    """
+    return _get_registry(desktop).call(name, arguments or {})
+
+
+__all__ = ["get_tools_schema", "call_tool"]

@@ -18,7 +18,7 @@ class FakePlatform(Platform):
         self.typed: list[str] = []
         self.keys: list[str] = []
         self.clicks: list[tuple[int, int]] = []
-        self.scrolls: list[tuple[str, int]] = []
+        self.scrolls: list[tuple] = []
         self.closed = False
         # 测试用：list_elements 抛异常的开关
         self.fail_elements = False
@@ -53,6 +53,9 @@ class FakePlatform(Platform):
         return list(getattr(window, "_roots", []))
 
     # 输入
+    def move_to(self, x, y):
+        self.calls.append(("move_to", (x, y)))
+
     def click(self, x, y):
         self.clicks.append((x, y))
         self.calls.append(("click", (x, y)))
@@ -63,6 +66,15 @@ class FakePlatform(Platform):
     def right_click(self, x, y):
         self.calls.append(("right_click", (x, y)))
 
+    def middle_click(self, x, y):
+        self.calls.append(("middle_click", (x, y)))
+
+    def mouse_down(self, button="left", x=None, y=None):
+        self.calls.append(("mouse_down", (button, x, y)))
+
+    def mouse_up(self, button="left", x=None, y=None):
+        self.calls.append(("mouse_up", (button, x, y)))
+
     def type_text(self, text):
         self.typed.append(text)
         self.calls.append(("type_text", (text,)))
@@ -71,8 +83,9 @@ class FakePlatform(Platform):
         self.keys.append(key)
         self.calls.append(("key_press", (key,)))
 
-    def scroll(self, direction, amount=3):
-        self.scrolls.append((direction, amount))
+    def scroll(self, direction, amount=3, x=None, y=None):
+        self.scrolls.append((direction, amount, x, y))
+        self.calls.append(("scroll", (direction, amount, x, y)))
 
     def drag(self, x1, y1, x2, y2):
         self.calls.append(("drag", (x1, y1, x2, y2)))

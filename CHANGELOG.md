@@ -4,7 +4,53 @@
 
 ## [Unreleased]
 
-### v0.1.0 — 初始 MVP
+## v0.2.0 — 统一 Agent API + MCP + 完整鼠标
+
+面向 AI agent 的接口层重写：引入**工具注册表**作为所有工具的唯一真相源，
+新增 **MCP server**，并把鼠标能力补全到左/右/中键 + 滚轮 + 按下/松开。
+0.x 阶段 Platform ABC 新增抽象方法按 MINOR 递增。
+
+### Added — 新增
+
+- **工具注册表** (`tools/`)：`ToolSpec`（名字/描述/JSON schema/handler 绑定）
+  和 `ToolRegistry`，是所有 agent 集成的唯一真相源。22 个工具只在此定义一次，
+  OpenAI function-calling / LangChain / MCP 全部从它自动派生，杜绝多份定义漂移。
+  - `ToolRegistry.openai_schema()`、`.mcp_tools()`、`.call(name, args)` 统一分发。
+  - `ToolResult` 统一返回包络：`{ok, result|error, image}`，所有异常在分发边界
+    被捕获成结构化错误，不再让 agent loop 崩溃。
+  - **窗口 id 寻址**：窗口工具的 `window` 参数既接受标题子串，也接受
+    `list_windows` 返回的窗口 id（hwnd 字符串），解决重名窗口/句柄无法回传的问题。
+- **完整鼠标 API**（Platform / Desktop / Windows 后端 + 注册表工具）：
+  - `move_to(x, y)`：移动光标不按键（悬停/定位）。
+  - `middle_click(x, y)`：中键（滚轮按下）单击。
+  - `mouse_down(button, x?, y?)` / `mouse_up(button, x?, y?)`：按下/松开原子操作，
+    支持 `left/right/middle`，可自定义拖拽、框选、长按。
+  - `scroll(direction, amount, x?, y?)`：滚轮支持先把光标定位到目标区域再滚
+    （滚轮作用于光标所在控件），水平滚动保留 hscroll/shift+滚轮兜底。
+  - 新增工具：`desktop_move_mouse`、`desktop_double_click`、`desktop_middle_click`、
+    `desktop_mouse_down`、`desktop_mouse_up`、`desktop_scroll`、`desktop_drag`、
+    `desktop_click_text`、`desktop_fill_form`、`desktop_find_text`（OCR）、
+    `desktop_wait_until_gone`（工具集从 10 扩充到 22）。
+- **MCP server** (`integrations/mcp_server.py`)：stdio 传输，一个
+  `desktop-pilot-mcp` 控制台入口（`python -m desktop_pilot.integrations.mcp_server`）。
+  工具列表与调用全部从注册表派生，已用真实 MCP client 端到端验证。
+- `integrations.function_call.call_tool(name, args, desktop)`：原生 function-calling
+  的执行器，拿到模型 tool_call 后直接分发，无需手写 if/else。
+
+### Changed — 变更
+
+- `integrations/function_call.py` 与 `integrations/langchain.py` 改为从注册表派生
+  的薄封装；`get_tools_schema(desktop=None)` 与 `get_tools(desktop)` 签名向后兼容。
+- LangChain 工具改用 `StructuredTool` + 动态 pydantic 模型，参数 schema 与注册表同源。
+- 版本号升至 **0.2.0**。
+
+### Fixed — 修复
+
+- Windows 后端每次鼠标/键盘操作前重新确认前台窗口（`_ensure_foreground`），
+  修复在 Hermes CLI 等会频繁抢焦点的环境下 SendInput 被路由到错误应用的问题。
+- `scroll` 现在会先激活/定位，保证滚动落到目标窗口。
+
+## v0.1.0 — 初始 MVP
 
 首个可用版本，完成 README 任务清单 T01–T24 的全部 P0–P4 任务。
 

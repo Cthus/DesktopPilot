@@ -22,7 +22,7 @@ from .conftest import (
 
 
 def test_version():
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.2.0"
 
 
 def test_context_manager_calls_close():
@@ -36,16 +36,28 @@ def test_basic_proxy_methods():
     fake = FakePlatform(screenshot_png=b"PNGDATA")
     with Desktop(platform=fake) as bot:
         assert bot.screenshot() == b"PNGDATA"
+        bot.move_to(5, 6)
         bot.click(10, 20)
+        bot.double_click(11, 22)
+        bot.right_click(30, 40)
+        bot.middle_click(50, 60)
+        bot.mouse_down("left", 1, 2)
+        bot.mouse_up("left", 3, 4)
         bot.type_text("hi")
         bot.key_press("enter")
         bot.drag(0, 0, 100, 100)
-        bot.scroll("down", amount=5)
+        bot.scroll("down", amount=5, x=7, y=8)
     assert fake.clicks == [(10, 20)]
     assert fake.typed == ["hi"]
     assert fake.keys == ["enter"]
+    assert ("move_to", (5, 6)) in fake.calls
+    assert ("double_click", (11, 22)) in fake.calls
+    assert ("right_click", (30, 40)) in fake.calls
+    assert ("middle_click", (50, 60)) in fake.calls
+    assert ("mouse_down", ("left", 1, 2)) in fake.calls
+    assert ("mouse_up", ("left", 3, 4)) in fake.calls
     assert ("drag", (0, 0, 100, 100)) in fake.calls
-    assert fake.scrolls == [("down", 5)]
+    assert fake.scrolls == [("down", 5, 7, 8)]
 
 
 def test_find_window_proxy():

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "desktop-pilot"
-version = "0.1.0"
+version = "0.2.0"
 description = "Cross-platform GUI automation SDK for AI agents — structured element access, OCR fallback, and LLM-friendly APIs"
 readme = "README.md"
 license = { text = "MIT" }
@@ -32,11 +32,16 @@ dependencies = [
 ocr = ["pytesseract>=0.3.10"]
 vision = ["pytesseract>=0.3.10", "opencv-python>=4.8"]
 langchain = ["langchain-core>=0.1"]
+mcp = ["mcp>=1.0"]
 all = [
     "pytesseract>=0.3.10",
     "opencv-python>=4.8",
     "langchain-core>=0.1",
+    "mcp>=1.0",
 ]
+
+[project.scripts]
+desktop-pilot-mcp = "desktop_pilot.integrations.mcp_server:main"
 dev = [
     "pytest>=7.4",
     "pytest-cov>=4.1",
@@ -48,9 +53,9 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/desktop-pilot"
-Documentation = "https://github.com/example/desktop-pilot#readme"
-Issues = "https://github.com/example/desktop-pilot/issues"
+Homepage = "https://github.com/Cthus/DesktopPilot"
+Documentation = "https://github.com/Cthus/DesktopPilot#readme"
+Issues = "https://github.com/Cthus/DesktopPilot/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]

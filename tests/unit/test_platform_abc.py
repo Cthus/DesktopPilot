@@ -37,6 +37,14 @@ def test_stubs_raise_unsupported(cls):
     with pytest.raises(UnsupportedOperationError):
         p.right_click(0, 0)
     with pytest.raises(UnsupportedOperationError):
+        p.middle_click(0, 0)
+    with pytest.raises(UnsupportedOperationError):
+        p.move_to(0, 0)
+    with pytest.raises(UnsupportedOperationError):
+        p.mouse_down("left")
+    with pytest.raises(UnsupportedOperationError):
+        p.mouse_up("left")
+    with pytest.raises(UnsupportedOperationError):
         p.type_text("x")
     with pytest.raises(UnsupportedOperationError):
         p.key_press("enter")

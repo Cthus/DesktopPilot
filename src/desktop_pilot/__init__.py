@@ -26,7 +26,7 @@ from .core.exceptions import (
 from .core.platform import Platform
 from .core.types import Point, Rect, Size
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
     "Desktop",
@@ -111,28 +111,66 @@ class Desktop:
         return self._platform.list_elements(window)
 
     # ------------------------------------------------------------------ #
-    # 基础输入
+    # 基础输入：鼠标
     # ------------------------------------------------------------------ #
+    def move_to(self, x: int, y: int) -> None:
+        """把鼠标光标移动到屏幕坐标 (x, y)，不按键（用于悬停/定位）。"""
+        self._platform.move_to(x, y)
+
     def click(self, x: int, y: int) -> None:
+        """左键单击屏幕坐标。"""
         self._platform.click(x, y)
 
     def double_click(self, x: int, y: int) -> None:
+        """左键双击屏幕坐标。"""
         self._platform.double_click(x, y)
 
     def right_click(self, x: int, y: int) -> None:
+        """右键单击屏幕坐标。"""
         self._platform.right_click(x, y)
 
+    def middle_click(self, x: int, y: int) -> None:
+        """中键（滚轮按下）单击屏幕坐标。"""
+        self._platform.middle_click(x, y)
+
+    def mouse_down(
+        self, button: str = "left", x: Optional[int] = None, y: Optional[int] = None
+    ) -> None:
+        """按下并按住鼠标键（``"left"|"right"|"middle"``）。可先移动到 (x,y)。
+
+        与 :meth:`mouse_up` 配合可实现自定义拖拽、框选、长按等。"""
+        self._platform.mouse_down(button=button, x=x, y=y)
+
+    def mouse_up(
+        self, button: str = "left", x: Optional[int] = None, y: Optional[int] = None
+    ) -> None:
+        """松开鼠标键（``"left"|"right"|"middle"``）。可先移动到 (x,y)。"""
+        self._platform.mouse_up(button=button, x=x, y=y)
+
+    def drag(self, x1: int, y1: int, x2: int, y2: int) -> None:
+        """按住左键从 (x1,y1) 拖到 (x2,y2)。"""
+        self._platform.drag(x1, y1, x2, y2)
+
+    def scroll(
+        self,
+        direction: str,
+        amount: int = 3,
+        x: Optional[int] = None,
+        y: Optional[int] = None,
+    ) -> None:
+        """滚动滚轮。direction: ``up/down/left/right``；amount 为格数。
+
+        给定 x,y 时先把光标移到该坐标再滚动（滚轮作用于光标所在控件）。"""
+        self._platform.scroll(direction, amount, x=x, y=y)
+
+    # ------------------------------------------------------------------ #
+    # 基础输入：键盘
+    # ------------------------------------------------------------------ #
     def type_text(self, text: str) -> None:
         self._platform.type_text(text)
 
     def key_press(self, key: str) -> None:
         self._platform.key_press(key)
-
-    def scroll(self, direction: str, amount: int = 3) -> None:
-        self._platform.scroll(direction, amount)
-
-    def drag(self, x1: int, y1: int, x2: int, y2: int) -> None:
-        self._platform.drag(x1, y1, x2, y2)
 
     # ------------------------------------------------------------------ #
     # 高层语义动作（agent 最常用）

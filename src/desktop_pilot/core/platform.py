@@ -34,6 +34,11 @@ class Platform(ABC):
     def list_elements(self, window: Window) -> list[Element]:
         """获取窗口的完整控件树（返回顶层元素，后代通过 children 访问）。"""
 
+    # --- 鼠标 ---
+    @abstractmethod
+    def move_to(self, x: int, y: int) -> None:
+        """把鼠标光标移动到屏幕坐标 (x, y)，不按键（用于悬停/定位）。"""
+
     @abstractmethod
     def click(self, x: int, y: int) -> None:
         """在屏幕坐标左键单击。"""
@@ -47,6 +52,18 @@ class Platform(ABC):
         """在屏幕坐标右键单击。"""
 
     @abstractmethod
+    def middle_click(self, x: int, y: int) -> None:
+        """在屏幕坐标中键（滚轮按下）单击。"""
+
+    @abstractmethod
+    def mouse_down(self, button: str = "left", x: int | None = None, y: int | None = None) -> None:
+        """按下并按住鼠标键。button: left/right/middle。给定 x,y 时先移动再按下。"""
+
+    @abstractmethod
+    def mouse_up(self, button: str = "left", x: int | None = None, y: int | None = None) -> None:
+        """松开鼠标键。button: left/right/middle。给定 x,y 时先移动再松开。"""
+
+    @abstractmethod
     def type_text(self, text: str) -> None:
         """逐字输入文本（焦点需已在目标控件上）。"""
 
@@ -55,8 +72,17 @@ class Platform(ABC):
         """按键或组合键，如 ``"enter"`` / ``"tab"`` / ``"ctrl+c"``。"""
 
     @abstractmethod
-    def scroll(self, direction: str, amount: int = 3) -> None:
-        """滚动滚轮。direction: up/down/left/right。amount 为滚动格数。"""
+    def scroll(
+        self,
+        direction: str,
+        amount: int = 3,
+        x: int | None = None,
+        y: int | None = None,
+    ) -> None:
+        """滚动滚轮。direction: up/down/left/right。amount 为滚动格数。
+
+        给定 x,y 时先把光标移到该坐标再滚动（滚轮作用于光标所在窗口/控件）。
+        """
 
     @abstractmethod
     def drag(self, x1: int, y1: int, x2: int, y2: int) -> None:

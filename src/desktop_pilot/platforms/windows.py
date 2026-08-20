@@ -433,13 +433,31 @@ class WindowsPlatform(Platform):
     # ------------------------------------------------------------------ #
     # 鼠标
     # ------------------------------------------------------------------ #
+    _BUTTONS = ("left", "right", "middle")
+
+    @staticmethod
+    def _norm_button(button: str) -> str:
+        b = (button or "left").strip().lower()
+        if b not in WindowsPlatform._BUTTONS:
+            raise ValueError(f"未知鼠标键: {button!r}（应为 left/right/middle）")
+        return b
+
     def _click(self, x: int, y: int, button: str, clicks: int, hwnd: int | None = None) -> None:  # pragma: no cover - 真实鼠标
-        if hwnd:
-            self._activate_window(hwnd)
+        # 优先激活调用方指定的窗口；否则激活当前前台窗口——避免 SendInput
+        # 被 Windows 路由到错误的应用（pyautogui.click 的已知坑）。
+        if hwnd is None:
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+        self._activate_window(hwnd)
         try:
             pyautogui.click(x=x, y=y, button=button, clicks=clicks, interval=0.05)
         except Exception as exc:
             raise PlatformError(f"点击 ({x},{y}) 失败: {exc}") from exc
+
+    def move_to(self, x: int, y: int) -> None:  # pragma: no cover
+        try:
+            pyautogui.moveTo(x, y)
+        except Exception as exc:
+            raise PlatformError(f"移动到 ({x},{y}) 失败: {exc}") from exc
 
     def click(self, x: int, y: int) -> None:  # pragma: no cover
         self._click(x, y, button="left", clicks=1)
@@ -450,9 +468,49 @@ class WindowsPlatform(Platform):
     def right_click(self, x: int, y: int) -> None:  # pragma: no cover
         self._click(x, y, button="right", clicks=1)
 
+    def middle_click(self, x: int, y: int) -> None:  # pragma: no cover
+        self._click(x, y, button="middle", clicks=1)
+
+    def mouse_down(self, button: str = "left", x: int | None = None, y: int | None = None) -> None:  # pragma: no cover
+        b = self._norm_button(button)
+        if x is not None and y is not None:
+            try:
+                pyautogui.moveTo(x, y)
+            except Exception as exc:
+                raise PlatformError(f"移动到 ({x},{y}) 失败: {exc}") from exc
+        self._ensure_foreground()
+        try:
+            pyautogui.mouseDown(button=b)
+        except Exception as exc:
+            raise PlatformError(f"按下 {b} 键失败: {exc}") from exc
+
+    def mouse_up(self, button: str = "left", x: int | None = None, y: int | None = None) -> None:  # pragma: no cover
+        b = self._norm_button(button)
+        if x is not None and y is not None:
+            try:
+                pyautogui.moveTo(x, y)
+            except Exception as exc:
+                raise PlatformError(f"移动到 ({x},{y}) 失败: {exc}") from exc
+        self._ensure_foreground()
+        try:
+            pyautogui.mouseUp(button=b)
+        except Exception as exc:
+            raise PlatformError(f"松开 {b} 键失败: {exc}") from exc
+
     # ------------------------------------------------------------------ #
     # 键盘
     # ------------------------------------------------------------------ #
+    def _ensure_foreground(self) -> None:
+        """重新激活当前前台窗口——保证后续 SendInput 落到正确应用。
+
+        pyautogui 内部用 SendInput，Windows 会把输入路由到前台窗口。
+        在 Hermes CLI 环境下，terminal 工具每次开 powershell 都会抢焦点，
+        所以每次鼠标键盘操作前必须"再确认一次"前台。
+        """
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if hwnd:
+            self._activate_window(hwnd)
+
     def type_text(self, text: str) -> None:  # pragma: no cover - 真实键盘输入
         """逐字输入文本。
 
@@ -462,6 +520,7 @@ class WindowsPlatform(Platform):
         """
         if not text:
             return
+        self._ensure_foreground()
         # 把文本按“可被 pyautogui 打印的 ASCII 连续段”与“非 ASCII 段”切开，
         # ASCII 段批量 write，非 ASCII 段逐个走 Unicode 注入。
         buf = ""
@@ -488,6 +547,7 @@ class WindowsPlatform(Platform):
         """按键。支持单键 ``"enter"`` 和组合 ``"ctrl+c"`` / ``"alt+f4"``。"""
         if not key:
             return
+        self._ensure_foreground()
         expr = key.strip().lower()
         try:
             if "+" in expr:
@@ -502,8 +562,21 @@ class WindowsPlatform(Platform):
         except Exception as exc:
             raise PlatformError(f"按键 {key!r} 失败: {exc}") from exc
 
-    def scroll(self, direction: str, amount: int = 3) -> None:
+    def scroll(
+        self,
+        direction: str,
+        amount: int = 3,
+        x: int | None = None,
+        y: int | None = None,
+    ) -> None:
         d = direction.lower()
+        # 滚轮作用于光标所在窗口/控件：给定坐标就先把光标移过去。
+        if x is not None and y is not None:
+            try:
+                pyautogui.moveTo(x, y)
+            except Exception as exc:  # pragma: no cover
+                raise PlatformError(f"移动到 ({x},{y}) 失败: {exc}") from exc
+        self._ensure_foreground()
         try:
             if d == "up":
                 pyautogui.scroll(amount)
@@ -529,9 +602,10 @@ class WindowsPlatform(Platform):
     def drag(self, x1: int, y1: int, x2: int, y2: int) -> None:
         try:
             pyautogui.moveTo(x1, y1)
-            pyautogui.mouseDown()
+            self._ensure_foreground()
+            pyautogui.mouseDown(button="left")
             pyautogui.moveTo(x2, y2, duration=0.2)
-            pyautogui.mouseUp()
+            pyautogui.mouseUp(button="left")
         except Exception as exc:  # pragma: no cover
             raise PlatformError(
                 f"拖拽 ({x1},{y1})->({x2},{y2}) 失败: {exc}"

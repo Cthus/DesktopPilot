@@ -35,6 +35,9 @@ class LinuxPlatform(Platform):
     def list_elements(self, window: Window) -> list[Element]:
         raise self._unsupported()
 
+    def move_to(self, x: int, y: int) -> None:
+        raise self._unsupported()
+
     def click(self, x: int, y: int) -> None:
         raise self._unsupported()
 
@@ -44,13 +47,22 @@ class LinuxPlatform(Platform):
     def right_click(self, x: int, y: int) -> None:
         raise self._unsupported()
 
+    def middle_click(self, x: int, y: int) -> None:
+        raise self._unsupported()
+
+    def mouse_down(self, button: str = "left", x: int | None = None, y: int | None = None) -> None:
+        raise self._unsupported()
+
+    def mouse_up(self, button: str = "left", x: int | None = None, y: int | None = None) -> None:
+        raise self._unsupported()
+
     def type_text(self, text: str) -> None:
         raise self._unsupported()
 
     def key_press(self, key: str) -> None:
         raise self._unsupported()
 
-    def scroll(self, direction: str, amount: int = 3) -> None:
+    def scroll(self, direction: str, amount: int = 3, x: int | None = None, y: int | None = None) -> None:
         raise self._unsupported()
 
     def drag(self, x1: int, y1: int, x2: int, y2: int) -> None:

@@ -1,155 +1,105 @@
-"""LangChain Tool 适配。
+"""LangChain Tool 适配（基于工具注册表自动派生）。
 
-把 DesktopPilot 的核心能力包装成 LangChain ``BaseTool`` 列表，
-直接喂给 LangChain agent 使用。
+所有工具定义都在 :mod:`desktop_pilot.tools` 里，本模块把每个
+:class:`~desktop_pilot.tools.ToolSpec` 动态包装成一个 LangChain ``BaseTool``，
+不再手写第二份名字/描述/参数，避免漂移。
 
     from desktop_pilot import Desktop
     from desktop_pilot.integrations.langchain import get_tools
 
     with Desktop() as bot:
         tools = get_tools(bot)
-        # 把 tools 交给 agent ...
+        # 把 tools 交给 LangChain agent ...
 """
 from __future__ import annotations
 
-from typing import Any, Optional
+import json
+from typing import Any
 
-from ..core.element import Element, Window
+from ..tools import ToolRegistry
 
 
-def get_tools(desktop: Any):
+def get_tools(desktop: Any) -> list[Any]:
     """返回绑定到给定 :class:`~desktop_pilot.Desktop` 的 LangChain 工具列表。
 
-    需要可选依赖 ``langchain-core``（``pip install desktop-pilot[langchain]``）。
+    需要可选依赖 ``langchain-core``（``pip install 'desktop-pilot[langchain]'``）。
     """
     try:
-        from langchain_core.tools import BaseTool  # type: ignore
+        from langchain_core.tools import StructuredTool  # type: ignore
     except ImportError as exc:  # pragma: no cover - 依赖可选
         raise ImportError(
             "LangChain 集成需要 langchain-core：pip install 'desktop-pilot[langchain]'"
         ) from exc
 
-    def _window_by_substring(title: str) -> Window:
-        return desktop.find_window(title_contains=title)
+    registry = ToolRegistry(desktop)
 
-    def _serialize_element(el: Element) -> dict:
-        return el.to_dict()
+    def make_runner(spec_name: str):
+        def _run(**kwargs: Any) -> str:
+            result = registry.call(spec_name, kwargs)
+            # LangChain 工具返回字符串：序列化成紧凑 JSON，图像只给摘要。
+            return json.dumps(result.to_dict(include_image=False), ensure_ascii=False)
 
-    class ScreenshotTool(BaseTool):
-        name: str = "desktop_screenshot"
-        description: str = "截取当前屏幕，返回 base64 编码的 JPEG 图像。"
+        return _run
 
-        def _run(self, max_size_kb: int = 500) -> str:  # type: ignore[override]
-            from ..vision.screenshot import screenshot_b64
+    tools: list[Any] = []
+    for spec in registry.specs():
+        tool = StructuredTool(
+            name=spec.name,
+            description=spec.description,
+            args_schema=_build_args_schema(spec),
+            func=make_runner(spec.name),
+        )
+        tools.append(tool)
+    return tools
 
-            return screenshot_b64(desktop._platform, max_size_kb=max_size_kb)
 
-    class ListWindowsTool(BaseTool):
-        name: str = "desktop_list_windows"
-        description: str = "列出当前所有可见顶层窗口（标题、位置、进程）。"
+def _build_args_schema(spec: Any) -> Any:
+    """从 ToolSpec 的 JSON Schema 动态生成 pydantic 参数模型。
 
-        def _run(self) -> list[dict]:  # type: ignore[override]
-            return [w.to_dict() for w in desktop.list_windows()]
+    langchain 的 StructuredTool 用 pydantic 模型做参数校验/文档；这里用
+    pydantic v2 的 ``create_model`` 直接从 JSON Schema 的 properties 生成，
+    保证与注册表的 schema 同源。
+    """
+    try:
+        from pydantic import Field, create_model  # type: ignore
+    except ImportError as exc:  # pragma: no cover - langchain-core 依赖 pydantic
+        raise ImportError("LangChain 集成需要 pydantic：pip install pydantic") from exc
 
-    class FindWindowTool(BaseTool):
-        name: str = "desktop_find_window"
-        description: str = "按标题查找窗口。传 title 精确匹配或 title_contains 子串匹配。"
+    parameters = spec.parameters or {}
+    properties = parameters.get("properties", {})
+    required = set(parameters.get("required", []))
 
-        def _run(  # type: ignore[override]
-            self,
-            title: Optional[str] = None,
-            title_contains: Optional[str] = None,
-        ) -> dict:
-            return desktop.find_window(
-                title=title, title_contains=title_contains
-            ).to_dict()
+    fields: dict[str, Any] = {}
+    for pname, pschema in properties.items():
+        py_type = _json_type_to_python(pschema)
+        default = pschema.get("default", ... if pname in required else None)
+        desc = pschema.get("description", "")
+        if "enum" in pschema:
+            # pydantic 用 Literal 表达枚举
+            from typing import Literal
 
-    class ListElementsTool(BaseTool):
-        name: str = "desktop_list_elements"
-        description: str = "列出指定窗口的完整 UI 控件树（按窗口标题子串定位窗口）。"
+            py_type = Literal[tuple(pschema["enum"])]  # type: ignore
+        fields[pname] = (py_type, Field(default=default, description=desc))
 
-        def _run(self, window: str) -> list[dict]:  # type: ignore[override]
-            win = _window_by_substring(window)
-            return [_serialize_element(r) for r in desktop.list_elements(window=win)]
+    return create_model(f"{spec.name}_args", **fields)
 
-    class ClickTool(BaseTool):
-        name: str = "desktop_click"
-        description: str = "在屏幕绝对坐标 (x, y) 单击鼠标左键。"
 
-        def _run(self, x: int, y: int) -> str:  # type: ignore[override]
-            desktop.click(x, y)
-            return f"clicked ({x}, {y})"
+def _json_type_to_python(schema: dict[str, Any]) -> Any:
+    t = schema.get("type")
+    if t == "integer":
+        return int
+    if t == "number":
+        return float
+    if t == "boolean":
+        return bool
+    if t == "array":
+        from typing import List
 
-    class ClickButtonTool(BaseTool):
-        name: str = "desktop_click_button"
-        description: str = "在指定窗口里按名字找到按钮并点击。window 为窗口标题子串。"
-
-        def _run(  # type: ignore[override]
-            self,
-            window: str,
-            name: str,
-            exact: bool = True,
-        ) -> str:
-            from ..actions.click import click_button
-
-            win = _window_by_substring(window)
-            el = click_button(desktop._platform, win, name=name, exact=exact)
-            return f"clicked button {el.name!r} at {el.rect.center.to_tuple()}"
-
-    class TypeTextTool(BaseTool):
-        name: str = "desktop_type_text"
-        description: str = "在当前焦点处逐字输入文本。"
-
-        def _run(self, text: str) -> str:  # type: ignore[override]
-            desktop.type_text(text)
-            return f"typed {text!r}"
-
-    class TypeIntoTool(BaseTool):
-        name: str = "desktop_type_into"
-        description: str = "在指定窗口里按标签找到输入框并填入文本（会先清空）。"
-
-        def _run(self, window: str, field: str, text: str) -> str:  # type: ignore[override]
-            from ..actions.type_text import type_into
-
-            win = _window_by_substring(window)
-            type_into(desktop._platform, win, field=field, text=text)
-            return f"filled {field!r} with {text!r}"
-
-    class KeyPressTool(BaseTool):
-        name: str = "desktop_key_press"
-        description: str = "按键或组合键，例如 'enter'、'tab'、'ctrl+c'、'alt+f4'。"
-
-        def _run(self, key: str) -> str:  # type: ignore[override]
-            desktop.key_press(key)
-            return f"pressed {key!r}"
-
-    class WaitForTool(BaseTool):
-        name: str = "desktop_wait_for"
-        description: str = "等待包含指定文本(或精确名字)的元素出现，返回该元素。"
-
-        def _run(  # type: ignore[override]
-            self,
-            text: Optional[str] = None,
-            name: Optional[str] = None,
-            timeout: float = 10.0,
-        ) -> dict:
-            from ..actions.wait import wait_for
-
-            el = wait_for(desktop._platform, text=text, name=name, timeout=timeout)
-            return _serialize_element(el)
-
-    return [
-        ScreenshotTool(),
-        ListWindowsTool(),
-        FindWindowTool(),
-        ListElementsTool(),
-        ClickTool(),
-        ClickButtonTool(),
-        TypeTextTool(),
-        TypeIntoTool(),
-        KeyPressTool(),
-        WaitForTool(),
-    ]
+        items = schema.get("items", {})
+        return List[_json_type_to_python(items)]  # type: ignore
+    if t == "object":
+        return dict
+    return str
 
 
 __all__ = ["get_tools"]
