@@ -82,10 +82,12 @@ def detect_windows_from_screenshot(
 # 第二层：窗口内元素检测
 # --------------------------------------------------------------------------- #
 def _ocr_full_region(gray: np.ndarray, lang: str = "chi_sim+eng") -> list[dict[str, Any]]:
-    """对一整块灰度图做 OCR，返回所有识别到的文字及其位置。"""
+    """对一整块灰度图做 OCR，返回所有识别到的文字及其位置。
+
+    特殊处理：中文相邻单字会被合并成短语（如 "选"+"择" → "选择"）。
+    """
     try:
         import pytesseract
-        # 自动绑定 tesseract 路径（引擎可能不在 PATH）
         from .ocr import _tesseract_cmd
         cmd = _tesseract_cmd()
         if cmd and getattr(pytesseract, "tesseract_cmd", "tesseract") == "tesseract":
@@ -103,7 +105,8 @@ def _ocr_full_region(gray: np.ndarray, lang: str = "chi_sim+eng") -> list[dict[s
     except Exception:
         return []
 
-    results = []
+    # 收集原始 OCR 词
+    raw_words = []
     n = len(data.get("text", []))
     for i in range(n):
         word = (data["text"][i] or "").strip()
@@ -115,17 +118,58 @@ def _ocr_full_region(gray: np.ndarray, lang: str = "chi_sim+eng") -> list[dict[s
             w = int(data["width"][i])
             h = int(data["height"][i])
             conf = int(data["conf"][i])
+            block_num = int(data["block_num"][i])
+            line_num = int(data["line_num"][i])
         except (KeyError, ValueError, TypeError):
             continue
-        if conf < 20:  # 置信度太低
+        if conf < 20:
             continue
-        results.append({
+        raw_words.append({
             "text": word,
             "rect": (x, y, w, h),
             "center": (x + w // 2, y + h // 2),
             "confidence": conf,
+            "block_num": block_num,
+            "line_num": line_num,
+            "x": x,
+            "y": y,
         })
-    return results
+
+    if not raw_words:
+        return []
+
+    # 合并相邻的中文单字：只合并都是中文单字的情况
+    merged = []
+    i = 0
+    while i < len(raw_words):
+        current = raw_words[i].copy()
+        cx, cy, cw, ch = current["rect"]
+        j = i + 1
+        while j < len(raw_words):
+            nxt = raw_words[j]
+            # 只合并两个都是中文单字的情况
+            if len(current["text"]) > 1 or len(nxt["text"]) > 1:
+                break
+            if not (all('一' <= c <= '鿿' or c in '，。、！？：；""''（）' for c in current["text"]) and
+                    all('一' <= c <= '鿿' or c in '，。、！？：；""''（）' for c in nxt["text"])):
+                break
+            nx, ny, nw, nh = nxt["rect"]
+            # 水平相邻
+            if abs(ny - cy) < 15 and 0 <= nx - (cx + cw) < 20 and abs(nh - ch) < 15:
+                current["text"] += nxt["text"]
+                new_w = nx + nw - cx
+                current["rect"] = (cx, cy, new_w, max(ch, nh))
+                current["center"] = (cx + new_w // 2, cy + max(ch, nh) // 2)
+                current["confidence"] = min(current["confidence"], nxt["confidence"])
+                cw = new_w
+                j += 1
+            else:
+                break
+        current["width"] = current["rect"][2]
+        merged.append(current)
+        i = j
+
+    return merged
 
 
 def _match_text_to_elements(
@@ -171,67 +215,72 @@ def _classify_element(
 ) -> UIElementType:
     """根据形状、文字、颜色、位置推断元素类型。"""
     area = w * h
+    r, g, b = avg_color
 
-    # 正方形或接近正方形的小元素 → 可能是 checkbox / radio / icon
-    if 0.8 < aspect_ratio < 1.2 and area < 2500:
-        # checkbox/radio 通常很小且居中偏左
+    # ---- 有文字的元素：优先按文字上下文分类 ----
+    if text:
+        text_lower = text.strip().lower()
+
+        # 纯数字/符号 → text_label
+        if all(c in "0123456789.:;|/\\()-+*%!?#@&" for c in text):
+            return UIElementType.TEXT_LABEL
+
+        # 链接特征：蓝色文字
+        if b > 120 and r < 100 and g < 150:
+            return UIElementType.LINK
+
+        # 宽高比接近按钮（1.5~5）且面积中等
+        if 1.2 < aspect_ratio < 6 and 500 < area < 80000:
+            # 如果是纯中文短语（2-4字），很可能是按钮
+            if all('一' <= c <= '鿿' for c in text) and 1 <= len(text) <= 6:
+                return UIElementType.BUTTON
+            # 英文按钮词
+            if text_lower in ("ok", "cancel", "yes", "no", "submit", "send", "done", "save", "close"):
+                return UIElementType.BUTTON
+
+        # 有冒号的 → 通常是标签
+        if ":" in text or "：" in text:
+            return UIElementType.TEXT_LABEL
+
+        # 窄高（下拉）→ dropdown
+        if aspect_ratio < 0.7 and h > 15:
+            return UIElementType.DROPDOWN
+
+        # 默认：有文字的区域是 text_label
+        return UIElementType.TEXT_LABEL
+
+    # ---- 无文字的元素：按形状分类 ----
+
+    # 正方形或接近正方形的小元素 → checkbox / radio / icon
+    if 0.75 < aspect_ratio < 1.3 and area < 3000:
         if area > 200:
             return UIElementType.CHECKBOX
         return UIElementType.ICON
 
-    # 椭圆/圆形 → toggle 或 radio
-    if aspect_ratio > 1.8 and area < 1500:
+    # 椭圆/极扁 → toggle / radio
+    if aspect_ratio > 2 and area < 2000:
         return UIElementType.TOGGLE
 
-    # 下拉箭头区域（宽 < 30, 高 > 20）→ dropdown
-    if w < 30 and 20 < h < 60:
+    # 窄高（下拉箭头）
+    if aspect_ratio < 0.5 and 20 < h < 80:
         return UIElementType.DROPDOWN
 
-    # 窄长水平条 → slider 或 scrollbar
-    if aspect_ratio > 6 and h < 15:
+    # 窄长水平条 → slider / scrollbar
+    if aspect_ratio > 5 and h < 20:
         return UIElementType.SLIDER
-    if h < 12 and w > 50:
+    if h < 10 and w > 80:
         return UIElementType.SCROLLBAR
 
-    # 进度条（宽高比 4:1~10:1, 中等面积）
-    if 3 < aspect_ratio < 12 and 20 < h < 40 and w > 100:
+    # 进度条
+    if 3 < aspect_ratio < 12 and 15 < h < 40 and w > 100:
         return UIElementType.PROGRESSBAR
 
-    # 按钮特征：矩形 + 有文字 + 面积中等 + 在合理位置
-    if text and 800 < area < 100000 and 1.2 < aspect_ratio < 6:
-        # 如果颜色偏灰/白/蓝 → 按钮
-        r, g, b = avg_color
-        if (b > 100 or r > 100) and 30 < h < 120:
-            return UIElementType.BUTTON
-
-    # 链接特征：蓝色文字（文字检测由调用方完成，这里主要看颜色）
-    r, g, b = avg_color
-    if b > 150 and g < 100 and r < 100 and text:
-        return UIElementType.LINK
-
-    # 文字标签：有文字但面积小、没有明显边框
-    if text and area < 5000:
-        return UIElementType.TEXT_LABEL
-
-    # 下拉框/输入框：矩形 + 边框 + 中等面积
-    if 1.5 < aspect_ratio < 5 and 20 < h < 60 and area > 1000:
-        # 检查是否有明显边框（四边灰度值差异）
-        return UIElementType.INPUT_FIELD
-
-    # Tab：窄条状 + 文字
-    if text and 30 < h < 80 and aspect_ratio > 1.5 and aspect_ratio < 4:
-        return UIElementType.TAB
-
-    # 菜单项：宽条 + 窄高
-    if text and h < 50 and w > 100:
-        return UIElementType.MENU_ITEM
-
-    # 图片：面积较大、宽高比接近1、没有文字
-    if not text and area > 10000:
+    # 图片：面积较大、宽高比接近1、无文字
+    if area > 10000:
         return UIElementType.IMAGE
 
     # 大矩形无文字 → 容器
-    if not text and area > 50000:
+    if area > 50000:
         return UIElementType.CONTAINER
 
     return UIElementType.UNKNOWN
