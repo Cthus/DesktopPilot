@@ -81,6 +81,87 @@ def detect_windows_from_screenshot(
 # --------------------------------------------------------------------------- #
 # 第二层：窗口内元素检测
 # --------------------------------------------------------------------------- #
+def _ocr_full_region(gray: np.ndarray, lang: str = "chi_sim+eng") -> list[dict[str, Any]]:
+    """对一整块灰度图做 OCR，返回所有识别到的文字及其位置。"""
+    try:
+        import pytesseract
+        # 自动绑定 tesseract 路径（引擎可能不在 PATH）
+        from .ocr import _tesseract_cmd
+        cmd = _tesseract_cmd()
+        if cmd and getattr(pytesseract, "tesseract_cmd", "tesseract") == "tesseract":
+            try:
+                pytesseract.pytesseract.tesseract_cmd = cmd
+            except AttributeError:
+                pass
+    except ImportError:
+        return []
+
+    try:
+        data = pytesseract.image_to_data(
+            gray, lang=lang, output_type=pytesseract.Output.DICT
+        )
+    except Exception:
+        return []
+
+    results = []
+    n = len(data.get("text", []))
+    for i in range(n):
+        word = (data["text"][i] or "").strip()
+        if not word:
+            continue
+        try:
+            x = int(data["left"][i])
+            y = int(data["top"][i])
+            w = int(data["width"][i])
+            h = int(data["height"][i])
+            conf = int(data["conf"][i])
+        except (KeyError, ValueError, TypeError):
+            continue
+        if conf < 20:  # 置信度太低
+            continue
+        results.append({
+            "text": word,
+            "rect": (x, y, w, h),
+            "center": (x + w // 2, y + h // 2),
+            "confidence": conf,
+        })
+    return results
+
+
+def _match_text_to_elements(
+    ocr_words: list[dict[str, Any]],
+    elements: list[dict[str, Any]],
+    overlap_threshold: float = 0.3,
+) -> list[dict[str, Any]]:
+    """把 OCR 识别到的文字匹配到最近的元素框上。"""
+    for word in ocr_words:
+        wx, wy = word["center"]
+        best_match = None
+        best_dist = float("inf")
+        for el in elements:
+            ex, ey = el["center"]
+            # 文字中心落在元素框内，或距离很近
+            ex_, ey_, ew, eh = el["rect"]
+            if ex_ <= wx <= ex_ + ew and ey_ <= wy <= ey_ + eh:
+                best_match = el
+                best_dist = 0
+                break
+            dist = ((wx - ex) ** 2 + (wy - ey) ** 2) ** 0.5
+            if dist < best_dist:
+                best_dist = dist
+                best_match = el
+
+        # 文字中心在元素框内，或距离 < 100px，就匹配上
+        if best_match and best_dist < 100:
+            existing = best_match.get("text", "")
+            if existing:
+                best_match["text"] = existing + " " + word["text"]
+            else:
+                best_match["text"] = word["text"]
+
+    return elements
+
+
 def _classify_element(
     x: int, y: int, w: int, h: int,
     text: str,
@@ -162,6 +243,7 @@ def detect_elements_in_region(
     min_element_area: int = 200,
     max_element_area: int = 500000,
     text_ocr: Any = None,
+    lang: str = "chi_sim+eng",
 ) -> list[dict[str, Any]]:
     """在截图（或指定区域）中检测所有 UI 元素。
 
@@ -187,6 +269,11 @@ def detect_elements_in_region(
     # 裁切区域
     if region is not None:
         rx, ry, rw, rh = region
+        # 边界保护
+        rx = max(0, min(rx, screenshot_rgb.shape[1] - 1))
+        ry = max(0, min(ry, screenshot_rgb.shape[0] - 1))
+        rw = max(1, min(rw, screenshot_rgb.shape[1] - rx))
+        rh = max(1, min(rh, screenshot_rgb.shape[0] - ry))
         crop = screenshot_rgb[ry:ry+rh, rx:rx+rw].copy()
         offset_x, offset_y = rx, ry
     else:
@@ -225,13 +312,14 @@ def detect_elements_in_region(
         el_crop = crop[y:y+h, x:x+w]
         el_gray = gray[y:y+h, x:x+w]
 
-        # OCR 识别文字
+        # OCR 识别文字：优先从全局 OCR 结果匹配，回退到逐元素 OCR
         text = ""
-        if text_ocr is not None and w > 20 and h > 10:
-            try:
-                text = text_ocr(el_gray).strip()
-            except Exception:
-                pass
+        if w > 20 and h > 10:
+            if text_ocr is not None:
+                try:
+                    text = text_ocr(el_gray).strip()
+                except Exception:
+                    pass
 
         # 平均颜色（用于链接/按钮颜色判断）
         avg_color = tuple(int(c) for c in cv2.mean(el_crop)[:3])
@@ -252,6 +340,77 @@ def detect_elements_in_region(
             "text": text,
             "aspect_ratio": round(ar, 2),
             "area": int(area),
+        })
+
+    # 策略：OCR 结果 + 轮廓检测结果合并
+    # 1. OCR 的每个词/句子本身就是一个元素（按钮上的文字、标签等）
+    # 2. 轮廓检测补充无文字的元素（图标、图像、复选框等）
+    ocr_words = _ocr_full_region(gray, lang=lang)
+
+    # OCR 结果转成元素
+    elements = []
+    for word in ocr_words:
+        if word["confidence"] < 30:
+            continue
+        wx, wy, ww, wh = word["rect"]
+        # 平均颜色
+        crop_el = crop[wy:wy+wh, wx:wx+ww] if wy+wh <= crop.shape[0] and wx+ww <= crop.shape[1] else None
+        avg_color = tuple(int(c) for c in cv2.mean(crop_el)[:3]) if crop_el is not None and crop_el.size > 0 else (200, 200, 200)
+        ar = ww / wh if wh > 0 else 0
+        el_type = _classify_element(wx, wy, ww, wh, word["text"], avg_color, ar, wy / max(crop.shape[0], 1))
+        elements.append({
+            "type": el_type.value,
+            "rect": (wx + offset_x, wy + offset_y, ww, wh),
+            "center": (wx + offset_x + ww // 2, wy + offset_y + wh // 2),
+            "text": word["text"],
+            "aspect_ratio": round(ar, 2),
+            "area": int(ww * wh),
+            "confidence": word["confidence"],
+        })
+
+    # 2. 轮廓检测补充无文字元素（去掉和 OCR 文字重叠的区域）
+    ocr_boxes = [(w["rect"][0], w["rect"][1], w["rect"][2], w["rect"][3]) for w in ocr_words]
+
+    thresh = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                   cv2.THRESH_BINARY_INV, 11, 2)
+    contours, _ = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+
+    for cnt in contours:
+        area = cv2.contourArea(cnt)
+        if area < min_element_area or area > max_element_area:
+            continue
+        epsilon = 0.02 * cv2.arcLength(cnt, True)
+        approx = cv2.approxPolyDP(cnt, epsilon, True)
+        if len(approx) < 4:
+            continue
+
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w < 15 or h < 10:
+            continue
+
+        # 跳过和已有 OCR 文字重叠的区域
+        overlap = False
+        for ox, oy, ow, oh in ocr_boxes:
+            if abs(x - ox) < 30 and abs(y - oy) < 30:
+                overlap = True
+                break
+        if overlap:
+            continue
+
+        el_crop = crop[y:y+h, x:x+w]
+        el_gray = gray[y:y+h, x:x+w]
+        avg_color = tuple(int(c) for c in cv2.mean(el_crop)[:3]) if el_crop.size > 0 else (200, 200, 200)
+        ar = w / h if h > 0 else 0
+        el_type = _classify_element(x, y, w, h, "", avg_color, ar, y / max(crop.shape[0], 1))
+
+        elements.append({
+            "type": el_type.value,
+            "rect": (x + offset_x, y + offset_y, w, h),
+            "center": (x + offset_x + w // 2, y + offset_y + h // 2),
+            "text": "",
+            "aspect_ratio": round(ar, 2),
+            "area": int(area),
+            "confidence": 0,
         })
 
     return elements
