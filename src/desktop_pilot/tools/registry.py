@@ -32,13 +32,21 @@ def _element_brief(el: Element) -> dict[str, Any]:
     }
 
 
-def _window_brief(win: Window) -> dict[str, Any]:
-    return {
+def _window_brief(win: Window, *, z: int | None = None, active: bool | None = None) -> dict[str, Any]:
+    out = {
         "id": str(win.hwnd) if win.hwnd is not None else None,
         "title": win.name,
         "rect": win.rect.to_tuple(),
+        "center": list(win.rect.center.to_tuple()),
         "pid": win.pid,
     }
+    # 窗口化理解：z = 前后层次（0=最顶层/最在前），active = 是否当前前台窗口。
+    # 前端：前一层 → 后一层 → 最底。
+    if z is not None:
+        out["z"] = z
+    if active is not None:
+        out["active"] = active
+    return out
 
 
 # --------------------------------------------------------------------------- #
@@ -228,11 +236,14 @@ class ToolRegistry:
         self._add(ToolSpec(
             name="desktop_list_windows",
             description=(
-                "列出当前所有可见顶层窗口。返回每个窗口的 id（后续操作窗口用这个 id 最稳）、"
-                "标题 title、位置 rect、进程 pid。操作前先用它确认目标窗口的 id/标题。"
+                "列出当前所有可见顶层窗口（按前后/层次排序）。返回每个窗口的 id（后续操作"
+                "窗口用这个 id 最稳）、标题 title、位置 rect、中心 center、进程 pid、"
+                "层次 z（0=最在前/最顶层）+ 是否当前前台窗口 active + 是否最小化 minimized。"
+                "操作前先用它了解当前屏幕堆叠了哪些窗口、谁是焦点、哪些在任务栏，"
+                "这是'窗口化理解'第一步。"
             ),
             parameters={"type": "object", "properties": {}, "required": []},
-            handler=lambda a: [_window_brief(w) for w in bot.list_windows()],
+            handler=lambda a: self._list_windows_layout(),
         ))
 
         self._add(ToolSpec(
@@ -702,6 +713,40 @@ class ToolRegistry:
 
         jpeg_bytes = base64.b64decode(b64)
         return value, jpeg_bytes, "image/jpeg"
+
+    def _list_windows_layout(self):
+        """列出窗口及其前后层次(z)/前台状态，让 agent 看懂"当前屏幕堆叠"。
+
+        list_windows 从 EnumWindows 得到的是自底向上的 z 序(cb 先遇到底部窗口)，
+        因此最后一个元素最靠前。这里倒排成 z=0 为最前面的窗口，并标记前台窗口。
+        """
+        wins = self._bot.list_windows()
+        # EnumWindows 顺序: 底 -> 顶。z = 0 表示最顶层/最靠前。
+        foreground_hwnd = self._foreground_hwnd()
+        n = len(wins)
+        briefs = []
+        for i, w in enumerate(wins):
+            # i=0 是最底, z 从最前算: 最前的是最后一个(i=n-1)
+            z = (n - 1) - i
+            activv = (w.hwnd == foreground_hwnd)
+            brief = _window_brief(w, z=z, active=activv)
+            # 最小化到任务栏的窗口: Windows 会给屏幕外坐标(如 -32000,-32000)。
+            # 给 agent 一个明确标记,避免把越界 center 当真实位置。
+            l, t, _, _ = w.rect.to_tuple()
+            brief["minimized"] = (l < -500 or t < -500)
+            briefs.append(brief)
+        return briefs
+
+    def _foreground_hwnd(self):
+        """当前前台窗口的 hwnd；取不到返回 None（防御）。"""
+        user32 = getattr(self._bot.platform, "_user32", None)
+        if user32 is None:
+            return None
+        try:
+            hwnd = user32.GetForegroundWindow()
+            return int(hwnd) if hwnd else None
+        except Exception:
+            return None
 
     def _list_elements(self, a: dict[str, Any]):
         win = self._win(a["window"])
