@@ -435,6 +435,70 @@ class ToolRegistry:
 
         # ---- 语义动作 ------------------------------------------------- #
         self._add(ToolSpec(
+            name="desktop_detect_windows",
+            description=(
+                "用 OpenCV 自动检测截图中所有窗口的矩形边界并标注。"
+                "返回每个窗口的位置、面积、中心点、标注颜色。"
+                "这是'窗口化理解'的视觉层——不依赖 UIA，纯靠图像分析找出屏幕上所有窗口区域。"
+                "可选 annotate=True 返回标注后的截图（带彩色框和序号）。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "annotate": {
+                        "type": "boolean",
+                        "description": "是否返回标注后的截图（带彩色框）。默认 False。",
+                        "default": False,
+                    },
+                    "min_area": {
+                        "type": "integer",
+                        "description": "最小窗口面积（像素），过滤小噪声。默认 10000。",
+                        "default": 10000,
+                    },
+                },
+                "required": [],
+            },
+            handler=lambda a: self._detect_windows(a),
+        ))
+
+        self._add(ToolSpec(
+            name="desktop_detect_ui_elements",
+            description=(
+                "用 OpenCV + OCR 对指定窗口做视觉分析，检测所有可交互/可读的 UI 元素。"
+                "返回每个元素的类型（button/text_label/input_field/link/checkbox/slider/tab/menu_item/"
+                "icon/image/progressbar/contaner/scrollbar/toggle/unknown）、位置、文字、置信度。"
+                "这是'视觉理解'核心工具——不依赖 UIA，纯靠图像+文字识别找出窗口内的所有元素。"
+                "可选 annotate=True 返回标注后的截图。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "window_id": {
+                        "type": "string",
+                        "description": "窗口 id（从 desktop_list_windows 获取），指定要分析哪个窗口。",
+                    },
+                    "annotate": {
+                        "type": "boolean",
+                        "description": "是否返回标注后的截图。默认 False。",
+                        "default": False,
+                    },
+                    "min_area": {
+                        "type": "integer",
+                        "description": "最小元素面积（像素）。默认 600。",
+                        "default": 600,
+                    },
+                    "lang": {
+                        "type": "string",
+                        "description": "OCR 语言。默认 chi_sim+eng。",
+                        "default": "chi_sim+eng",
+                    },
+                },
+                "required": ["window_id"],
+            },
+            handler=lambda a: self._detect_ui_elements(a),
+        ))
+
+        self._add(ToolSpec(
             name="desktop_click_button",
             description=(
                 "在指定窗口内按名字找到按钮并点击（无需坐标，最稳）。"
@@ -776,6 +840,100 @@ class ToolRegistry:
         x, y = a.get("x"), a.get("y")
         self._bot.scroll(direction, amount=amount, x=x, y=y)
         return _ok(f"scrolled {direction} {amount}")
+
+    def _detect_windows(self, a: dict[str, Any]):
+        """用 OpenCV 检测截图中的窗口矩形。"""
+        import io
+        import numpy as np
+        from PIL import Image
+        from ..vision.window_detector import detect_windows_from_screenshot, annotate_windows_on_screenshot
+
+        # 截全屏
+        png = self._bot.screenshot()
+        img = Image.open(io.BytesIO(png)).convert("RGB")
+        arr = np.array(img)
+
+        annotate = a.get("annotate", False)
+        min_area = int(a.get("min_area", 10000))
+
+        windows = detect_windows_from_screenshot(arr, min_area=min_area)
+
+        result = {"count": len(windows), "windows": windows}
+
+        if annotate:
+            annotated = annotate_windows_on_screenshot(arr, windows)
+            # 转回 PNG bytes
+            ann_img = Image.fromarray(annotated)
+            buf = io.BytesIO()
+            ann_img.save(buf, format="PNG")
+            result["annotated_image"] = buf.getvalue()
+
+        return result
+
+    def _detect_ui_elements(self, a: dict[str, Any]):
+        """对指定窗口做视觉分析，检测所有 UI 元素。"""
+        import io
+        import numpy as np
+        from PIL import Image
+        from ..vision.window_detector import detect_elements_in_region, annotate_elements_on_screenshot
+
+        # 解析窗口 rect
+        win_ref = a.get("window_id")
+        if win_ref is None:
+            return {"error": "window_id 必填"}
+
+        # 用 list_windows 找到目标窗口
+        wins = self._bot.list_windows()
+        target = None
+        for w in wins:
+            if str(w.hwnd) == str(win_ref):
+                # 跳过最小化窗口（rect 在屏幕外）
+                l, t = w.rect.left, w.rect.top
+                if l < -500 or t < -500:
+                    continue
+                target = w
+                break
+        if target is None:
+            # 按标题子串匹配（也跳过最小化）
+            for w in wins:
+                l, t = w.rect.left, w.rect.top
+                if l < -500 or t < -500:
+                    continue
+                if win_ref in (w.name or ""):
+                    target = w
+                    break
+        if target is None:
+            return {"error": f"找不到窗口: {win_ref}", "available": [w.hwnd for w in wins[:10]]}
+
+        # 截全屏 + 裁切窗口区域
+        png = self._bot.screenshot()
+        img = Image.open(io.BytesIO(png)).convert("RGB")
+        arr = np.array(img)
+        x, y, w_, h = target.rect.to_tuple()
+
+        annotate = a.get("annotate", False)
+        min_area = int(a.get("min_area", 600))
+        lang = a.get("lang", "chi_sim+eng")
+
+        elements = detect_elements_in_region(
+            arr, region=(x, y, w_, h),
+            min_element_area=min_area, lang=lang,
+        )
+
+        result = {
+            "window": {"id": str(target.hwnd), "title": target.name, "rect": list(target.rect.to_tuple())},
+            "count": len(elements),
+            "elements": elements,
+        }
+
+        if annotate:
+            annotated = annotate_elements_on_screenshot(arr, elements)
+            ann_img = Image.fromarray(annotated)
+            buf = io.BytesIO()
+            ann_img.save(buf, format="PNG")
+            result["annotated_image"] = buf.getvalue()
+
+        return result
 
     def _click_button(self, a: dict[str, Any]):
         from ..actions.click import click_button
