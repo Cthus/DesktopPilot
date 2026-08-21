@@ -289,6 +289,14 @@ def _classify_element(
     if area > 80000:
         return UIElementType.CONTAINER
 
+    # 非常小的元素（无文字）→ icon
+    if area < 800 and not text:
+        return UIElementType.ICON
+
+    # 窄高（< 0.5）且小 → icon
+    if aspect_ratio < 0.5 and area < 3000 and not text:
+        return UIElementType.ICON
+
     # 中等面积无文字 → image（很可能是图标或图片区域）
     if area > 8000 and 0.5 < aspect_ratio < 3:
         return UIElementType.IMAGE
