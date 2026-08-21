@@ -251,14 +251,17 @@ def _classify_element(
 
     # ---- 无文字的元素：按形状分类 ----
 
-    # 正方形或接近正方形的小元素 → checkbox / radio / icon
-    # checkbox 通常很小（< 40px）且接近正方形
-    if 0.75 < aspect_ratio < 1.3 and area < 2000 and min(w, h) < 40:
-        return UIElementType.CHECKBOX
-
-    # 极小正方形 → icon
-    if 0.75 < aspect_ratio < 1.3 and area < 500:
-        return UIElementType.ICON
+    # 正方形或接近正方形的小元素 → icon / checkbox / radio
+    if 0.7 < aspect_ratio < 1.4:
+        if area < 800:
+            return UIElementType.ICON
+        if area < 2500 and min(w, h) < 50:
+            return UIElementType.CHECKBOX
+        if area < 5000:
+            return UIElementType.ICON
+        # 更大的正方形 → 可能是按钮（无文字的按钮图标）
+        if area < 15000:
+            return UIElementType.BUTTON
 
     # 椭圆/极扁 → toggle / radio
     if aspect_ratio > 2 and area < 2000:
