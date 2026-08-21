@@ -252,9 +252,12 @@ def _classify_element(
     # ---- 无文字的元素：按形状分类 ----
 
     # 正方形或接近正方形的小元素 → checkbox / radio / icon
-    if 0.75 < aspect_ratio < 1.3 and area < 3000:
-        if area > 200:
-            return UIElementType.CHECKBOX
+    # checkbox 通常很小（< 40px）且接近正方形
+    if 0.75 < aspect_ratio < 1.3 and area < 2000 and min(w, h) < 40:
+        return UIElementType.CHECKBOX
+
+    # 极小正方形 → icon
+    if 0.75 < aspect_ratio < 1.3 and area < 500:
         return UIElementType.ICON
 
     # 椭圆/极扁 → toggle / radio
@@ -279,17 +282,26 @@ def _classify_element(
     if area > 10000:
         return UIElementType.IMAGE
 
-    # 大矩形无文字 → 容器
-    if area > 50000:
+    # 大面积无文字 → 容器
+    if area > 80000:
         return UIElementType.CONTAINER
 
+    # 中等面积无文字 → image（很可能是图标或图片区域）
+    if area > 8000 and 0.5 < aspect_ratio < 3:
+        return UIElementType.IMAGE
+
+    # 窄条无文字 → menu_item 或 tab
+    if h < 60 and w > 80:
+        return UIElementType.MENU_ITEM
+
+    # 默认
     return UIElementType.UNKNOWN
 
 
 def detect_elements_in_region(
     screenshot_rgb: np.ndarray,
     region: tuple[int, int, int, int] | None = None,
-    min_element_area: int = 200,
+    min_element_area: int = 600,
     max_element_area: int = 500000,
     text_ocr: Any = None,
     lang: str = "chi_sim+eng",
