@@ -163,18 +163,45 @@ class BrowserCDP:
     # 高级操作（供工具调用）
     # ------------------------------------------------------------------ #
     async def navigate(self, url: str) -> dict[str, Any]:
-        """导航到指定 URL。返回 {url, title, ready_state}。"""
+        """导航到指定 URL。返回 {url, title, ready_state} 或抛 RuntimeError。
+
+        三个坑都防：
+        1. Page.navigate 响应里的 errorText（DNS 失败/连接拒绝等）——不检查的话
+           Chrome 错误页 title 仍是目标网址、readyState 也是 complete，会被误判成功；
+        2. readyState 在 about:blank 起始页上就是 complete —— 必须同时确认
+           location.href 已离开空白页；
+        3. 导航中途读 DOM 拿到旧文档 —— 循环等待直到状态一致。
+        """
         url = url if "://" in url else f"https://{url}"
-        await self._send(CDP_PAGE_NAVIGATE, {"url": url})
-        # 等页面加载完成
+        nav_result = await self._send(CDP_PAGE_NAVIGATE, {"url": url})
+        error_text = nav_result.get("errorText")
+        if error_text:
+            raise RuntimeError(
+                f"导航失败: {error_text} ({url})。"
+                "常见原因：无网络/DNS 解析失败/站点不可达/被防火墙拦截。"
+            )
+        # 等页面加载完成且真正离开了空白页/错误页
         ready = ""
+        current = ""
         for _ in range(40):
             ready = await self.evaluate("document.readyState") or ""
-            if ready == "complete":
+            current = await self.evaluate("location.href") or ""
+            if (
+                ready == "complete"
+                and "about:blank" not in current
+                and "chrome-error://" not in current
+            ):
                 break
             await asyncio.sleep(0.25)
         title = await self.evaluate("document.title") or ""
         self._page_url = url
+        return {
+            "ok": True,
+            "url": url,
+            "final_url": current,
+            "title": str(title),
+            "ready_state": str(ready),
+        }
         return {"ok": True, "url": url, "title": str(title), "ready_state": str(ready)}
 
     async def evaluate(self, js: str) -> Any:
@@ -226,7 +253,15 @@ class BrowserCDP:
             };
         })()
         """
-        return await self.evaluate(script)
+        result = await self.evaluate(script)
+        # 空白页提示：agent 读到 about:blank 时明确知道原因（还没导航），
+        # 而不是误判"网站打不开"。
+        if isinstance(result, dict) and "about:blank" in str(result.get("url", "")):
+            result["hint"] = (
+                "当前是空白页（浏览器刚启动或尚未导航）。"
+                "请先调 desktop_browser_navigate 打开目标网址。"
+            )
+        return result
 
     # ------------------------------------------------------------------ #
     # 元素操作（JS 语义封装）

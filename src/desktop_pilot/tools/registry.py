@@ -216,8 +216,9 @@ class ToolRegistry:
             name="desktop_screenshot",
             description=(
                 "截取当前整个屏幕，返回 JPEG 图像（同时给出 base64）。"
-                "在做任何点击前先截图看清界面；也用于确认操作结果。"
-                "返回里的 image 可直接展示给多模态模型。"
+                "用于看清桌面应用界面、确认操作结果。返回里的 image 可直接展示给多模态模型。"
+                "注意：如果任务是网页操作（打开网站/搜索/读网页），不要截图——"
+                "改用 desktop_browser_navigate + browser_* 工具直接控制浏览器，精确且快。"
             ),
             parameters={
                 "type": "object",
@@ -762,9 +763,11 @@ class ToolRegistry:
         self._add(ToolSpec(
             name="desktop_browser_navigate",
             description=(
-                "用 CDP 控制 Chrome/Edge 导航到指定 URL。返回页面标题和 readyState。"
-                "这是浏览器自动化的入口——之后可用 desktop_browser_get_dom 读页面结构、"
-                "desktop_browser_evaluate 执行 JS。比截图+模拟点击可靠得多。"
+                "【网页任务首选入口】用 CDP 控制 Chrome/Edge 导航到指定 URL，返回页面标题。"
+                "凡是'打开某网站/搜索/网页点击/读网页内容'类任务，一律先用它打开页面，"
+                "再用 desktop_browser_get_dom 看结构、desktop_browser_click/type 按 CSS 选择器"
+                "精确操作——比截图+坐标+OCR 可靠得多。"
+                "仅当目标不是网页（桌面应用如微信/记事本）时才用 desktop_* 桌面工具。"
             ),
             parameters={
                 "type": "object",
@@ -1054,10 +1057,12 @@ class ToolRegistry:
         url = a["url"]
         try:
             result = browser_manager.navigate(url)
+        except RuntimeError as exc:
+            # navigate 的失败（DNS/超时/错误页）带明确原因，直接透传
+            return {"ok": False, "error": str(exc)}
         except Exception as exc:
             return {"ok": False, "error": f"浏览器导航失败: {exc}"}
-        # result 可能是 navigate 的返回或 dom 快照；这里取页面状态
-        return {"ok": True, "url": url, "result": result}
+        return {"ok": True, **result}
 
     def _browser_get_dom(self):
         from ..browser.manager import browser_manager

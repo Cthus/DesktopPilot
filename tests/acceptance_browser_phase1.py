@@ -1,6 +1,6 @@
 """Phase 1 验收: 浏览器元素操作闭环（click / type / get_text / wait_for）。
 
-用 example.com（稳定、无反爬）+ 一个表单页测试完整流程。
+用 bilibili.com（国内可达）测真实页面操作 + 注入 DOM 测表单。
 运行: python tests/acceptance_browser_phase1.py
 """
 import sys
@@ -13,17 +13,17 @@ from desktop_pilot.browser.manager import browser_manager
 def main() -> None:
     ok = True
 
-    print("1) 导航到 example.com ...")
-    r = browser_manager.navigate("example.com")
+    print("1) 导航到 bilibili.com（国内可达，不依赖外网）...")
+    r = browser_manager.navigate("bilibili.com")
     assert r["ok"], r
     print("   标题:", r["title"])
 
-    print("2) get_text 读 h1 ...")
-    text = browser_manager.get_text("h1")
-    print("   h1 =", text)
-    if "Example Domain" not in text:
+    print("2) get_text 读 <title> ...")
+    text = browser_manager.get_text("title")
+    print("   <title> =", text[:50])
+    if not text:
         ok = False
-        print("   !! h1 内容不符")
+        print("   !! title 为空")
 
     print("3) click 第一个链接 (a) ...")
     try:
@@ -39,11 +39,10 @@ def main() -> None:
     url = browser_manager.evaluate("location.href")
     print("   当前 URL:", str(url)[:70])
 
-    print("5) 在 about:blank 上测 type + wait_for ...")
+    print("5) 注入表单并测 type + wait_for ...")
     browser_manager.evaluate("document.body.innerHTML = '<input id=box><button id=go>Go</button>'")
     t = browser_manager.type_text("#box", "hello desktop_pilot")
     print("   type:", t)
-    g = browser_manager.get_text("#box")  # input 无 textContent，改读 value
     val = browser_manager.evaluate("document.querySelector('#box').value")
     print("   value =", val)
     if val != "hello desktop_pilot":
