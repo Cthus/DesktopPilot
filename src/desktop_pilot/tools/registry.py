@@ -758,6 +758,54 @@ class ToolRegistry:
             handler=lambda a: self._wait_until_text_gone_ocr(a),
         ))
 
+        # ---- 浏览器（CDP：读 DOM + JavaScript 控制）---------------- #
+        self._add(ToolSpec(
+            name="desktop_browser_navigate",
+            description=(
+                "用 CDP 控制 Chrome/Edge 导航到指定 URL。返回页面标题和 readyState。"
+                "这是浏览器自动化的入口——之后可用 desktop_browser_get_dom 读页面结构、"
+                "desktop_browser_evaluate 执行 JS。比截图+模拟点击可靠得多。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "目标 URL。可省略协议，自动补 https://。",
+                    },
+                },
+                "required": ["url"],
+            },
+            handler=lambda a: self._browser_navigate(a),
+        ))
+
+        self._add(ToolSpec(
+            name="desktop_browser_get_dom",
+            description=(
+                "读取当前浏览器页面的 DOM 结构摘要（URL/标题/body 元素树，最多 3 层）。"
+                "让 AI 看到页面结构（像前端开发者看 DOM），不靠截图猜。"
+            ),
+            parameters={"type": "object", "properties": {}, "required": []},
+            handler=lambda a: self._browser_get_dom(),
+        ))
+
+        self._add(ToolSpec(
+            name="desktop_browser_evaluate",
+            description=(
+                "在浏览器当前页面执行任意 JavaScript，返回结果。"
+                "可用于点击元素(element.click())、读取内容、修改页面等。"
+                "先 get_dom 了解结构，再用 evaluate 精确操作。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "js": {"type": "string", "description": "要执行的 JavaScript 代码。"},
+                },
+                "required": ["js"],
+            },
+            handler=lambda a: self._browser_evaluate(a),
+        ))
+
     # ------------------------------------------------------------------ #
     # 各 handler 实现
     # ------------------------------------------------------------------ #
@@ -934,6 +982,36 @@ class ToolRegistry:
             result["annotated_image"] = buf.getvalue()
 
         return result
+
+    def _browser_navigate(self, a: dict[str, Any]):
+        from ..browser.manager import browser_manager
+
+        url = a["url"]
+        try:
+            result = browser_manager.navigate(url)
+        except Exception as exc:
+            return {"ok": False, "error": f"浏览器导航失败: {exc}"}
+        # result 可能是 navigate 的返回或 dom 快照；这里取页面状态
+        return {"ok": True, "url": url, "result": result}
+
+    def _browser_get_dom(self):
+        from ..browser.manager import browser_manager
+
+        try:
+            dom = browser_manager.get_dom()
+        except Exception as exc:
+            return {"ok": False, "error": f"读取 DOM 失败: {exc}"}
+        return {"ok": True, "dom": dom}
+
+    def _browser_evaluate(self, a: dict[str, Any]):
+        from ..browser.manager import browser_manager
+
+        js = a["js"]
+        try:
+            value = browser_manager.evaluate(js)
+        except Exception as exc:
+            return {"ok": False, "error": f"执行 JS 失败: {exc}"}
+        return {"ok": True, "result": value}
 
     def _click_button(self, a: dict[str, Any]):
         from ..actions.click import click_button
