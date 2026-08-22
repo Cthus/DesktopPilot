@@ -41,7 +41,13 @@ def _call(server, request_type, params):
     """直接驱动 mcp server 的 request handler，解开 ServerResult 外壳。"""
     handler = server.request_handlers[request_type]
     req = request_type(method=_METHOD[request_type.__name__], params=params)
-    result = asyncio.get_event_loop().run_until_complete(handler(req))
+    # 显式新建 loop：Python 3.12+ 弃用了 get_event_loop 的隐式创建，
+    # 且前面的测试（如 browser）可能已 set/close 过主线程 loop。
+    loop = asyncio.new_event_loop()
+    try:
+        result = loop.run_until_complete(handler(req))
+    finally:
+        loop.close()
     # 1.x 的 handler 返回 ServerResult(root=...)；解开拿真正的 payload。
     return getattr(result, "root", result)
 
