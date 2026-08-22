@@ -806,6 +806,71 @@ class ToolRegistry:
             handler=lambda a: self._browser_evaluate(a),
         ))
 
+        self._add(ToolSpec(
+            name="desktop_browser_click",
+            description=(
+                "按 CSS 选择器点击页面元素（JS 原生 click，自动滚动到可见）。"
+                "比坐标点击精确得多——元素找不到返回明确错误。"
+                "选择器示例：'#submit-btn'、'.search-button'、'a[href=\"/login\"]'。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "CSS 选择器。"},
+                },
+                "required": ["selector"],
+            },
+            handler=lambda a: self._browser_click(a),
+        ))
+
+        self._add(ToolSpec(
+            name="desktop_browser_type",
+            description=(
+                "往输入框填文本（设置 value 并触发 input/change 事件，框架能感知）。"
+                "clear=false 时追加不清空。适合搜索框、表单等。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "输入框 CSS 选择器。"},
+                    "text": {"type": "string", "description": "要输入的文本。"},
+                    "clear": {"type": "boolean", "description": "先清空再输入（默认 true）。"},
+                },
+                "required": ["selector", "text"],
+            },
+            handler=lambda a: self._browser_type(a),
+        ))
+
+        self._add(ToolSpec(
+            name="desktop_browser_get_text",
+            description="读取页面上某个元素的文本内容（按 CSS 选择器）。",
+            parameters={
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "CSS 选择器。"},
+                },
+                "required": ["selector"],
+            },
+            handler=lambda a: self._browser_get_text(a),
+        ))
+
+        self._add(ToolSpec(
+            name="desktop_browser_wait_for",
+            description=(
+                "轮询等待某个 CSS 选择器出现在页面上（用于等待异步加载的内容）。"
+                "超时返回错误。"
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "selector": {"type": "string", "description": "CSS 选择器。"},
+                    "timeout": {"type": "number", "description": "最长等待秒数。默认 10。"},
+                },
+                "required": ["selector"],
+            },
+            handler=lambda a: self._browser_wait_for(a),
+        ))
+
     # ------------------------------------------------------------------ #
     # 各 handler 实现
     # ------------------------------------------------------------------ #
@@ -1012,6 +1077,53 @@ class ToolRegistry:
         except Exception as exc:
             return {"ok": False, "error": f"执行 JS 失败: {exc}"}
         return {"ok": True, "result": value}
+
+    def _browser_click(self, a: dict[str, Any]):
+        from ..browser.manager import browser_manager
+
+        try:
+            result = browser_manager.click(a["selector"])
+        except LookupError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            return {"ok": False, "error": f"点击失败: {exc}"}
+        return {"ok": True, **result}
+
+    def _browser_type(self, a: dict[str, Any]):
+        from ..browser.manager import browser_manager
+
+        try:
+            result = browser_manager.type_text(
+                a["selector"], a["text"], clear=bool(a.get("clear", True))
+            )
+        except LookupError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            return {"ok": False, "error": f"输入失败: {exc}"}
+        return {"ok": True, **result}
+
+    def _browser_get_text(self, a: dict[str, Any]):
+        from ..browser.manager import browser_manager
+
+        try:
+            text = browser_manager.get_text(a["selector"])
+        except LookupError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:
+            return {"ok": False, "error": f"读取失败: {exc}"}
+        return {"ok": True, "text": text}
+
+    def _browser_wait_for(self, a: dict[str, Any]):
+        from ..browser.manager import browser_manager
+
+        timeout = float(a.get("timeout", 10))
+        try:
+            result = browser_manager.wait_for_selector(a["selector"], timeout=timeout)
+        except TimeoutError as exc:
+            return {"ok": False, "error": str(exc), "timeout": timeout}
+        except Exception as exc:
+            return {"ok": False, "error": f"等待失败: {exc}"}
+        return {**result, "waited_timeout": timeout}
 
     def _click_button(self, a: dict[str, Any]):
         from ..actions.click import click_button

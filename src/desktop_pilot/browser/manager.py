@@ -103,6 +103,26 @@ class BrowserManager:
         self.ensure_browser()
         return self.run_in_loop(lambda: self._cdp.evaluate(js), timeout=30)
 
+    def click(self, selector: str) -> dict[str, Any]:
+        self.ensure_browser()
+        return self.run_in_loop(lambda: self._cdp.click(selector), timeout=15)
+
+    def type_text(self, selector: str, text: str, clear: bool = True) -> dict[str, Any]:
+        self.ensure_browser()
+        return self.run_in_loop(
+            lambda: self._cdp.type_text(selector, text, clear=clear), timeout=15
+        )
+
+    def get_text(self, selector: str) -> str:
+        self.ensure_browser()
+        return self.run_in_loop(lambda: self._cdp.get_text(selector), timeout=15)
+
+    def wait_for_selector(self, selector: str, timeout: float = 10.0) -> dict[str, Any]:
+        self.ensure_browser()
+        return self.run_in_loop(
+            lambda: self._cdp.wait_for_selector(selector, timeout=timeout), timeout=timeout + 10
+        )
+
     def close(self) -> None:
         with self._lock:
             if self._cdp is not None:

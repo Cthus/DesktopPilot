@@ -206,12 +206,33 @@ def _match_text_to_elements(
     return elements
 
 
+def _has_border(gray_crop: np.ndarray) -> bool:
+    """检测矩形是否有明显边框（四边灰度值与中心差异大）。
+
+    输入框/下拉框通常有 1-2px 的深色边框 + 浅色内部。
+    """
+    h, w = gray_crop.shape
+    if h < 8 or w < 8:
+        return False
+    # 取边缘 2px 和中心区域
+    top = gray_crop[:2, :].mean()
+    bottom = gray_crop[-2:, :].mean()
+    left = gray_crop[:, :2].mean()
+    right = gray_crop[:, -2:].mean()
+    center = gray_crop[h//4:3*h//4, w//4:3*w//4].mean()
+    # 四条边中至少两条比中心暗 40+（有描边）
+    edges = [top, bottom, left, right]
+    dark_edges = sum(1 for e in edges if center - e > 40)
+    return dark_edges >= 2
+
+
 def _classify_element(
     x: int, y: int, w: int, h: int,
     text: str,
     avg_color: tuple[int, int, int],
     aspect_ratio: float,
     rel_y: float,
+    has_border: bool = False,
 ) -> UIElementType:
     """根据形状、文字、颜色、位置推断元素类型。"""
     area = w * h
@@ -242,6 +263,10 @@ def _classify_element(
         if ":" in text or "：" in text:
             return UIElementType.TEXT_LABEL
 
+        # 有明显边框 + 扁平矩形 → input_field（输入框内有占位文字）
+        if has_border and 1.5 < aspect_ratio < 12 and 15 < h < 80 and area > 1500:
+            return UIElementType.INPUT_FIELD
+
         # 窄高（下拉）→ dropdown
         if aspect_ratio < 0.7 and h > 15:
             return UIElementType.DROPDOWN
@@ -250,6 +275,10 @@ def _classify_element(
         return UIElementType.TEXT_LABEL
 
     # ---- 无文字的元素：按形状分类 ----
+
+    # 有明显边框 + 扁平矩形 → input_field（空输入框）
+    if has_border and 1.5 < aspect_ratio < 12 and 15 < h < 80 and area > 1000:
+        return UIElementType.INPUT_FIELD
 
     # 正方形或接近正方形的小元素 → icon / checkbox / radio
     if 0.7 < aspect_ratio < 1.4:
@@ -406,8 +435,11 @@ def detect_elements_in_region(
         # 相对位置（归一化到 0-1）
         rel_y = y / crop.shape[0] if crop.shape[0] > 0 else 0
 
+        # 边框检测（input_field 判定用）
+        has_border = _has_border(el_gray) if el_gray.size > 0 else False
+
         # 分类
-        el_type = _classify_element(x, y, w, h, text, avg_color, ar, rel_y)
+        el_type = _classify_element(x, y, w, h, text, avg_color, ar, rel_y, has_border=has_border)
 
         elements.append({
             "type": el_type.value,
@@ -432,8 +464,16 @@ def detect_elements_in_region(
         # 平均颜色
         crop_el = crop[wy:wy+wh, wx:wx+ww] if wy+wh <= crop.shape[0] and wx+ww <= crop.shape[1] else None
         avg_color = tuple(int(c) for c in cv2.mean(crop_el)[:3]) if crop_el is not None and crop_el.size > 0 else (200, 200, 200)
+        # OCR 词周围扩展一点做边框检测（文字本身在框内，边框在外围）
+        pad = 3
+        bx0, by0 = max(0, wx-pad), max(0, wy-pad)
+        bx1 = min(crop.shape[1], wx+ww+pad)
+        by1 = min(crop.shape[0], wy+wh+pad)
+        border_crop = gray[by0:by1, bx0:bx1] if by1 > by0 and bx1 > bx0 else None
+        has_border = _has_border(border_crop) if border_crop is not None and border_crop.size > 0 else False
         ar = ww / wh if wh > 0 else 0
-        el_type = _classify_element(wx, wy, ww, wh, word["text"], avg_color, ar, wy / max(crop.shape[0], 1))
+        el_type = _classify_element(wx, wy, ww, wh, word["text"], avg_color, ar,
+                                    wy / max(crop.shape[0], 1), has_border=has_border)
         elements.append({
             "type": el_type.value,
             "rect": (wx + offset_x, wy + offset_y, ww, wh),
@@ -477,7 +517,9 @@ def detect_elements_in_region(
         el_gray = gray[y:y+h, x:x+w]
         avg_color = tuple(int(c) for c in cv2.mean(el_crop)[:3]) if el_crop.size > 0 else (200, 200, 200)
         ar = w / h if h > 0 else 0
-        el_type = _classify_element(x, y, w, h, "", avg_color, ar, y / max(crop.shape[0], 1))
+        has_border = _has_border(el_gray) if el_gray.size > 0 else False
+        el_type = _classify_element(x, y, w, h, "", avg_color, ar,
+                                    y / max(crop.shape[0], 1), has_border=has_border)
 
         elements.append({
             "type": el_type.value,

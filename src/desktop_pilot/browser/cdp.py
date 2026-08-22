@@ -228,6 +228,83 @@ class BrowserCDP:
         """
         return await self.evaluate(script)
 
+    # ------------------------------------------------------------------ #
+    # 元素操作（JS 语义封装）
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _escape_selector(selector: str) -> str:
+        """把 CSS selector 安全嵌入 JS 字符串。"""
+        return selector.replace("\\", "\\\\").replace("'", "\\'")
+
+    async def click(self, selector: str) -> dict[str, Any]:
+        """按 CSS 选择器点击元素（触发原生 click 事件）。"""
+        sel = self._escape_selector(selector)
+        js = f"""
+        (() => {{
+            const el = document.querySelector('{sel}');
+            if (!el) return {{ok: false, error: 'not found: {sel}'}};
+            el.scrollIntoView({{block: 'center'}});
+            el.click();
+            return {{ok: true, tag: el.tagName.toLowerCase(), text: (el.textContent||'').trim().slice(0,60)}};
+        }})()
+        """
+        result = await self.evaluate(js)
+        if isinstance(result, dict) and not result.get("ok"):
+            raise LookupError(result.get("error", f"元素不存在: {selector}"))
+        return result if isinstance(result, dict) else {"ok": True}
+
+    async def type_text(self, selector: str, text: str, clear: bool = True) -> dict[str, Any]:
+        """往输入框填文本（设置 value + 触发 input/change 事件让框架感知）。"""
+        sel = self._escape_selector(selector)
+        esc_text = json.dumps(text)  # JSON 转义安全
+        clear_js = "el.value = '';" if clear else ""
+        js = f"""
+        (() => {{
+            const el = document.querySelector('{sel}');
+            if (!el) return {{ok: false, error: 'not found: {sel}'}};
+            el.focus();
+            {clear_js}
+            el.value = {esc_text};
+            el.dispatchEvent(new Event('input', {{bubbles: true}}));
+            el.dispatchEvent(new Event('change', {{bubbles: true}}));
+            return {{ok: true, tag: el.tagName.toLowerCase(), value: String(el.value).slice(0,100)}};
+        }})()
+        """
+        result = await self.evaluate(js)
+        if isinstance(result, dict) and not result.get("ok"):
+            raise LookupError(result.get("error", f"元素不存在: {selector}"))
+        return result if isinstance(result, dict) else {"ok": True}
+
+    async def get_text(self, selector: str) -> str:
+        """读取元素的文本内容。"""
+        sel = self._escape_selector(selector)
+        js = f"""
+        (() => {{
+            const el = document.querySelector('{sel}');
+            return el ? (el.textContent || '').trim() : null;
+        }})()
+        """
+        result = await self.evaluate(js)
+        if result is None:
+            raise LookupError(f"元素不存在: {selector}")
+        return str(result)
+
+    async def wait_for_selector(self, selector: str, timeout: float = 10.0,
+                                poll_interval: float = 0.5) -> dict[str, Any]:
+        """轮询等待选择器出现，超时抛 WaitTimeoutError 语义的 LookupError。"""
+        import time as _time
+
+        deadline = _time.monotonic() + timeout
+        while True:
+            found = await self.evaluate(
+                f"document.querySelector('{self._escape_selector(selector)}') !== null"
+            )
+            if found:
+                return {"ok": True, "selector": selector}
+            if _time.monotonic() >= deadline:
+                raise TimeoutError(f"等待 {timeout:.1f}s 后选择器仍未出现: {selector}")
+            await asyncio.sleep(poll_interval)
+
     async def close(self) -> None:
         if self._ws:
             try:

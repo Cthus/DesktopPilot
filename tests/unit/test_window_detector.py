@@ -89,3 +89,25 @@ def test_annotate_elements_on_screenshot():
     elements = detect_elements_in_region(img, min_element_area=200)
     annotated = annotate_elements_on_screenshot(img, elements)
     assert annotated.shape == img.shape
+
+
+def test_has_border_detects_input_field():
+    """有明显边框的矩形应被识别为输入框。"""
+    from desktop_pilot.vision.window_detector import _has_border
+
+    # 创建带边框的输入框（深色边框 + 浅色内部）
+    img = np.zeros((80, 300, 3), dtype=np.uint8)
+    cv2.rectangle(img, (0, 0), (299, 79), (200, 200, 200), -1)  # 浅色内部
+    cv2.rectangle(img, (0, 0), (299, 79), (30, 30, 30), 2)      # 深色边框
+
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    assert _has_border(gray) is True
+
+
+def test_has_border_false_for_label():
+    """无边框的文字区域不应被识别为输入框。"""
+    from desktop_pilot.vision.window_detector import _has_border
+
+    img = np.full((80, 300, 3), 200, dtype=np.uint8)  # 纯浅色，无边框
+    gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
+    assert _has_border(gray) is False
