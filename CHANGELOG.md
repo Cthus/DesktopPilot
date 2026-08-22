@@ -4,11 +4,48 @@
 
 ## [Unreleased]
 
+## v0.3.0 — 浏览器自动化（CDP：DOM + JavaScript 控制）
+
+新增 `browser/` 模块：通过 Chrome DevTools Protocol 直接控制 Chrome/Edge，
+**读 DOM、用 JS 操作**——浏览器场景不再依赖截图/坐标/OCR，元素精确可达。
+0.2.x 的桌面工具保持不变，浏览器是并行的新路径。
+
 ### Added — 新增
+
+- **CDP 客户端**（`browser/cdp.py`）：
+  - 自动定位 Chrome/Edge（Program Files 探测），带唯一 user-data-dir 启动
+    远程调试端口（避免 Chrome 实例复用导致调试端口失效的坑）。
+  - WebSocket 连接（websockets 15 asyncio API），`Page.navigate` /
+    `Runtime.evaluate`，递增 msg_id 匹配响应。
+  - 高层操作：`navigate` / `get_dom_tree` / `evaluate` / `click(selector)` /
+    `type_text(selector, text)` / `get_text(selector)` / `wait_for_selector`。
+- **BrowserManager**（`browser/manager.py`）：后台线程事件循环持有 CDP 连接，
+  所有操作（含建连）在同一 loop 内执行；同步入口供 MCP 工具调用；
+  健康检查失败自动重建连接。
+- **7 个浏览器工具**（注册表扩容）：
+  - `desktop_browser_navigate`：导航到 URL，返回 {url, title, ready_state}。
+  - `desktop_browser_get_dom`：读页面 DOM 树摘要（URL/标题/body 三层结构）。
+  - `desktop_browser_evaluate`：执行任意 JS。
+  - `desktop_browser_click`：CSS 选择器点击（自动 scrollIntoView）。
+  - `desktop_browser_type`：填输入框（触发 input/change 事件，框架可感知）。
+  - `desktop_browser_get_text`：读元素文本。
+  - `desktop_browser_wait_for`：轮询等待选择器出现。
+
+### Changed — 变更
+
+- 视觉理解层（v0.2.x 引入）继续可用：自绘界面走 OCR 路径，网页走 DOM 路径，两者互补。
+- 版本升至 **0.3.0**。
+
+### Fixed — 修复
+
+- MCP server 测试在 Python 3.12+ 下因隐式 event loop 弃用 + 跨测试污染而
+  随机失败：改为显式新建事件循环。
+
+### Added — 新增（v0.2.3 后追加）
 
 - **窗口化理解（第一步）**：`desktop_list_windows` 现在返回每个窗口的
   `z`（前后层次，0=最前）、`active`（是否前台窗口）、`minimized`（是否最小化到任务栏）
-  和 `center`。agent 能像人一样先看懂"当前屏幕堆叠了哪些窗口、谁是焦点、哪些在任务栏、每个在哪"，
+  和 `center`。agent 能像人一样先看懂"当前屏幕堆叠了哪些窗口、谁是焦点、哪些在任务栏"，
   再决定操作哪个窗口——这是"让 AI 理解图形化界面"的第一堂课。
 
 ## v0.2.3 — 自绘界面开箱即用 + 排障体验闭环
