@@ -301,6 +301,10 @@ def _classify_element(
     if area > 8000 and 0.5 < aspect_ratio < 3:
         return UIElementType.IMAGE
 
+    # 小中等面积（400-8000）+ 宽高比 1.4-2.5 → icon（任务栏/工具栏小按钮）
+    if 400 < area < 8000 and 1.4 < aspect_ratio < 2.5:
+        return UIElementType.ICON
+
     # 窄条无文字 → menu_item 或 tab
     if h < 60 and w > 80:
         return UIElementType.MENU_ITEM
@@ -312,7 +316,7 @@ def _classify_element(
 def detect_elements_in_region(
     screenshot_rgb: np.ndarray,
     region: tuple[int, int, int, int] | None = None,
-    min_element_area: int = 600,
+    min_element_area: int = 400,
     max_element_area: int = 500000,
     text_ocr: Any = None,
     lang: str = "chi_sim+eng",

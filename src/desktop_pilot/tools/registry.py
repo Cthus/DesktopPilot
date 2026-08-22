@@ -484,8 +484,8 @@ class ToolRegistry:
                     },
                     "min_area": {
                         "type": "integer",
-                        "description": "最小元素面积（像素）。默认 600。",
-                        "default": 600,
+                        "description": "最小元素面积（像素）。默认 400。",
+                        "default": 400,
                     },
                     "lang": {
                         "type": "string",
@@ -912,7 +912,7 @@ class ToolRegistry:
         x, y, w_, h = target.rect.to_tuple()
 
         annotate = a.get("annotate", False)
-        min_area = int(a.get("min_area", 600))
+        min_area = int(a.get("min_area", 400))
         lang = a.get("lang", "chi_sim+eng")
 
         elements = detect_elements_in_region(
